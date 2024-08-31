@@ -784,6 +784,7 @@ dependencies = [
  "dotenvy",
  "envy",
  "futures",
+ "libc",
  "log",
  "log4rs",
  "mongodb",
