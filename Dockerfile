@@ -50,6 +50,6 @@ WORKDIR /app
 # - environment file
 COPY --from=builder /app/log4rs.yaml log4rs.yaml
 COPY --from=builder /app/.env_template /.env
-COPY --from=builder /app/target/release/online-receiver online-receiver
+COPY --from=builder /app/target/release/online online
 
-ENTRYPOINT ["./online-receiver"]
+ENTRYPOINT ["./online"]
