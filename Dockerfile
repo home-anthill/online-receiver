@@ -4,7 +4,11 @@ FROM rust:bookworm AS chef
 # some cargo dependencies require additional packages
 # to build the project.
 RUN apt-get update && apt-get install -y \
-    g++
+    g++ \
+    openssl \
+    make cmake
+# openssl-dev (required in case of rust alpine)
+
 
 WORKDIR /app
 
