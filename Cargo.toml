@@ -1,0 +1,48 @@
+[package]
+name = "ks89-online-receiver"
+version = "1.0.0"
+edition = "2021"
+resolver = "2"
+
+[[bin]]
+name = "online"
+path = "src/main.rs"
+
+[lib]
+name = "online"
+path = "src/lib.rs"
+
+[profile.release]
+codegen-units = 1
+lto = "fat"
+opt-level = 3
+panic = "abort"
+
+[dependencies]
+thiserror = "1.0.63"
+anyhow = "1.0.86"
+tokio = { version = "^1.39.3", features = ["full"] }
+tokio-executor-trait = "^2.1.1"
+tokio-reactor-trait = "^1.1.0"
+mongodb = "^3.1.0"
+paho-mqtt = "0.12.5"
+log = "^0.4.22"
+log4rs = { version = "^1.3.0", features = ["console_appender", "rolling_file_appender"] }
+dotenvy = "^0.15.7"
+envy = "^0.4.2"
+futures = "^0.3.30"
+
+# To use Serialize and Deserialize traits, you must include Serde.
+# The "derive" feature is only required when
+# using #[derive(Serialize, Deserialize)] to make Serde work with structs
+# and enums defined in your crate.
+serde = { version = "^1.0.209", features = ["derive"] }
+serde_json = "^1.0.127"
+
+[dev-dependencies]
+uuid = { version = "1.10.0", features = ["v4", "fast-rng", "macro-diagnostics"] }
+# better looking rust assertions
+pretty_assertions = "^1.4.0"
+# include also serde_json with the feature 'preserve_order' to don't change the order of keys
+# 'preserve_order' is required to compare results in a predictible way in testing
+serde_json = { version = "^1.0.127", features = ["preserve_order"] }

@@ -1,0 +1,120 @@
+name: Docker Image CI
+
+on:
+  push:
+    paths-ignore:
+      - '**.md'
+      - '**.MD'
+    branches:
+      - "master"
+      - "develop"
+      - "ft**"
+    # Publish semver tags as releases.
+    tags: [ 'v*.*.*' ]
+  pull_request:
+    branches:
+      - "master"
+      - "develop"
+  # To run the workflow manually from the Actions tab
+  workflow_dispatch:
+
+env:
+  REGISTRY: docker.io
+  # github.repository as '<account>/<repo>',
+  # but here I have to use 'ks89/<repo name>', because
+  # on dockerhub.io I have a personal account called 'ks89', and not 'home-anthill'
+  IMAGE_NAME: ks89/${{ github.event.repository.name }}
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Install Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: stable
+          # target: x86_64-unknown-linux-musl
+          components: clippy, llvm-tools-preview
+      - name: Install Make
+        run: sudo apt-get install -y make
+      - name: Install and start Mosquitto
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install mosquitto mosquitto-clients -y
+          echo "installed!!!"
+          mosquitto_passwd -b -c password_file mosquser Password1!
+          sudo mv password_file /etc/mosquitto/password_file
+          sudo systemctl enable mosquitto
+          sudo systemctl start mosquitto
+          # for unknown reasons the two mosquitto_* commands returns some error code
+          # that force github actions job to fail. With `|| true` I can ignore that error.
+          mosquitto_pub --version || true
+          mosquitto_sub --version || true
+      - name: Install and start MongoDB
+        uses: supercharge/mongodb-github-action@1.11.0
+        with:
+          mongodb-version: 6.0
+          mongodb-replica-set: test-rs
+          mongodb-port: 27017
+      - name: Run tests
+        run: |
+          cp .env_template .env
+          echo "Installing dependencies"
+          make deps-ci
+          echo "Running tests"
+          make test-coverage
+
+  build:
+    name: Build and publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # Workaround: https://github.com/docker/build-push-action/issues/461
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # Login against a Docker registry except on PR
+      # https://github.com/docker/login-action
+      - name: Log into registry
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ secrets.DOCKER_HUB_USERNAME }}
+          password: ${{ secrets.DOCKER_HUB_ACCESS_TOKEN }}
+
+      # Extract metadata (tags, labels) for Docker
+      # https://github.com/docker/metadata-action
+      - name: Extract Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=schedule
+            type=ref,event=branch
+            type=ref,event=tag
+            type=ref,event=pr
+            type=sha
+
+      # Build and push Docker image with Buildx (don't push on PR)
+      # https://github.com/docker/build-push-action
+      - name: Build and push Docker image
+        id: build-and-push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

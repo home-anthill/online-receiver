@@ -1,0 +1,9 @@
+.idea
+.github
+.vscode
+target
+logs
+.dockerignore
+Dockerfile
+.env
+coverage

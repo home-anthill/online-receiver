@@ -1,0 +1,5 @@
+hard_tabs = false
+tab_spaces = 4
+max_width = 120
+# `merge_imports` is still unstable and only available in nightly channel.
+# merge_imports = true
