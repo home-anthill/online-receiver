@@ -40,7 +40,6 @@ serde = { version = "^1.0.209", features = ["derive"] }
 serde_json = "^1.0.127"
 
 [dev-dependencies]
-uuid = { version = "1.10.0", features = ["v4", "fast-rng", "macro-diagnostics"] }
 # better looking rust assertions
 pretty_assertions = "^1.4.0"
 # include also serde_json with the feature 'preserve_order' to don't change the order of keys
