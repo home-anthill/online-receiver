@@ -37,7 +37,7 @@ COPY . .
 RUN cargo build --release
 
 
-FROM debian:bookworm-slim as runtime
+FROM debian:bookworm-slim AS runtime
 
 # to be able to use ROOT CAs file from /etc/ssl/certs/
 # folder, you must install the 'ca-certificates' package
