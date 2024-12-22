@@ -4,8 +4,7 @@ use serde::Deserialize;
 
 #[derive(Deserialize, Debug)]
 pub struct Env {
-    pub mongo_uri: String,
-    pub mongo_db_name: String,
+    pub redis_uri: String,
     pub mqtt_url: String,
     pub mqtt_port: u16,
     pub mqtt_client_id: String,
@@ -31,8 +30,7 @@ pub fn init() -> Env {
 }
 
 fn print_env(env: &Env) {
-    let mongo_uri = env.mongo_uri.clone();
-    let mongo_db_name = env.mongo_db_name.clone();
+    let redis_uri = env.redis_uri.clone();
     let mqtt_url = env.mqtt_url.clone();
     let mqtt_port = env.mqtt_port;
     let mqtt_client_id = env.mqtt_client_id.clone();
@@ -44,8 +42,7 @@ fn print_env(env: &Env) {
     let mqtt_cert_file = env.mqtt_cert_file.clone();
     let mqtt_key_file = env.mqtt_key_file.clone();
     info!(target: "app", "env = {:?}", env);
-    info!(target: "app", "mongo_uri = {}", mongo_uri);
-    info!(target: "app", "mongo_db_name = {}", mongo_db_name);
+    info!(target: "app", "redis_uri = {}", redis_uri);
     info!(target: "app", "mqtt_url = {}", mqtt_url);
     info!(target: "app", "mqtt_port = {}", mqtt_port);
     info!(target: "app", "mqtt_client_id = {}", mqtt_client_id);

@@ -8,7 +8,6 @@ use crate::models::topic::Topic;
 
 pub mod message;
 pub mod notification;
-pub mod online;
 pub mod payload_trait;
 pub mod topic;
 

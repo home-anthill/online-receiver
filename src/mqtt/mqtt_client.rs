@@ -1,8 +1,8 @@
+use log::{error, info};
 use std::string::String;
 use std::time::Duration;
 
 use futures::stream::StreamExt;
-use log::{error, info};
 use paho_mqtt::{AsyncClient, AsyncReceiver, ConnectOptions, Message, ServerResponse};
 
 use crate::mqtt::mqtt_options::MqttOptions;

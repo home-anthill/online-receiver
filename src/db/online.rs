@@ -1,56 +1,43 @@
-use log::info;
+use log::{debug, info};
+use std::time::{SystemTime, UNIX_EPOCH};
 
-use mongodb::bson::{doc, DateTime};
-use mongodb::options::ReturnDocument;
-use mongodb::Database;
+use redis::{aio::MultiplexedConnection, AsyncCommands, Value};
 
-use crate::models::online::{Online, OnlineDocument};
-
-pub async fn insert_online(
-    db: &Database,
-    uuid: &str,
-    api_token: &str,
-    online: bool,
-) -> mongodb::error::Result<Option<Online>> {
+pub async fn insert_online(con: &MultiplexedConnection, uuid: &str, online: bool) -> Option<()> {
     info!(target: "app", "insert_online - Called");
-    let collection = db.collection::<OnlineDocument>("online");
+    let mut con = con.clone();
 
-    let online_doc = collection
-        .find_one_and_update(
-            doc! { "uuid": uuid, "apiToken": api_token },
-            doc! {
-                "$set": {
-                    "online": online,
-                    "modifiedAt": DateTime::now(),
-                },
-                "$setOnInsert": {
-                    "createdAt": DateTime::now(),
-                }
-            },
+    let key = "online-".to_owned() + uuid;
+    let online_value = if online { 1u64 } else { 0u64 };
+
+    let is_exists: Value = con.exists(key.as_str()).await.unwrap();
+    let field_to_set = if is_exists == Value::Int(1) {
+        "modifiedAt"
+    } else {
+        "createdAt"
+    };
+
+    let set_response: Value = con
+        .hset_multiple(
+            key.as_str(),
+            &[
+                ("online", online_value),
+                (
+                    field_to_set,
+                    SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs(),
+                ),
+            ],
         )
-        .upsert(true)
-        .return_document(ReturnDocument::After)
-        // TODO ATTENTION I should check and return a custom DbError here Err(....) and not unwrap with "?" and ignore the error.
-        .await?;
+        .await
+        .unwrap();
 
-    // return result
-    match online_doc {
-        Some(online_doc) => Ok(Some(document_to_json(&online_doc))),
-        None => {
-            log::error!(target: "app", "insert_online - Cannot find and update online");
-            // TODO ATTENTION I should return a custom DbError here Err(....) and not Ok.
-            Ok(None)
-        }
-    }
-}
+    debug!(target: "app", "insert_online - set_response = {:?}", set_response);
 
-fn document_to_json(online_doc: &OnlineDocument) -> Online {
-    Online {
-        _id: online_doc.id.to_string(),
-        uuid: online_doc.uuid.to_string(),
-        apiToken: online_doc.apiToken.to_string(),
-        createdAt: online_doc.createdAt.to_string(),
-        modifiedAt: online_doc.modifiedAt.to_string(),
-        online: online_doc.online,
+    if set_response == Value::Okay {
+        Some(())
+    } else {
+        // TODO ATTENTION I should return a custom DbError here Err(....) and not Ok.
+        log::error!(target: "app", "insert_online - Cannot find and update online");
+        None
     }
 }

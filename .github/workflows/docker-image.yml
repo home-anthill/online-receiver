@@ -55,12 +55,10 @@ jobs:
           # that force github actions job to fail. With `|| true` I can ignore that error.
           mosquitto_pub --version || true
           mosquitto_sub --version || true
-      - name: Install and start MongoDB
-        uses: supercharge/mongodb-github-action@1.11.0
+      - name: Install and start Redis
+        uses: shogo82148/actions-setup-redis@v1
         with:
-          mongodb-version: 6.0
-          mongodb-replica-set: test-rs
-          mongodb-port: 27017
+          redis-version: "7.x"
       - name: Run tests
         run: |
           cp .env_template .env

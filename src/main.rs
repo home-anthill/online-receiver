@@ -1,8 +1,11 @@
-use anyhow::bail;
 use log::{debug, error, info, warn};
-use mongodb::Database;
+use std::time::Duration;
+
+use anyhow::bail;
+use paho_mqtt::Message;
+use redis::aio::MultiplexedConnection;
+
 use online::config::{init, Env};
-use online::db::connect;
 use online::db::online::insert_online;
 use online::errors::message_error::MessageError;
 use online::models::notification::Notification;
@@ -11,8 +14,6 @@ use online::mqtt::mqtt_client::MqttClient;
 use online::mqtt::mqtt_config::MqttConfig;
 use online::mqtt::mqtt_options::MqttOptions;
 use online::mqtt::{get_bytes_from_payload, get_string_payload};
-use paho_mqtt::Message;
-use std::time::Duration;
 
 const TOPICS: &[&str] = &["online/+"];
 
@@ -21,11 +22,9 @@ async fn main() {
     // 1. Init logger and env
     let env: Env = init();
 
-    // 2. Init and connect to the Database
-    let database: Database = connect(&env).await.unwrap_or_else(|error| {
-        error!(target: "app", "MongoDB - cannot connect {:?}", error);
-        panic!("cannot connect to MongoDB:: {:?}", error)
-    });
+    // 2. Init and connect to Redis
+    let client = redis::Client::open(env.redis_uri.clone()).unwrap();
+    let con = client.get_multiplexed_async_connection().await.unwrap();
 
     // 3. Init and connect to MQTT
     info!(target: "app", "Initializing MQTT...");
@@ -40,7 +39,7 @@ async fn main() {
             // 4. Wait for incoming MQTT messages
             info!(target: "app", "Waiting for incoming MQTT messages");
             while let Some(msg_opt) = mqtt_client.get_next_message().await {
-                let _ = process_mqtt_message(&msg_opt, &mut mqtt_client, &database).await;
+                let _ = process_mqtt_message(&msg_opt, &mut mqtt_client, &con).await;
             }
         }
         Err(err) => {
@@ -53,7 +52,7 @@ async fn main() {
 async fn process_mqtt_message(
     msg_opt: &Option<Message>,
     mqtt_client: &mut MqttClient,
-    database: &Database,
+    con: &MultiplexedConnection,
 ) -> Result<(), anyhow::Error> {
     if let Some(msg) = msg_opt {
         debug!(target: "app", "process_mqtt_message - MQTT message received");
@@ -65,10 +64,10 @@ async fn process_mqtt_message(
             Err(anyhow::Error::from(MessageError::EmptyMessageError))
         } else {
             match serde_json::from_str::<Notification<OnlineMqttPayload>>(get_string_payload(msg).as_str()) {
-                Ok(res) => match insert_online(database, &res.uuid, &res.api_token, true).await {
-                    Ok(_) => Ok(()),
-                    Err(err) => {
-                        error!(target: "app", "process_mqtt_message - cannot insert/update online in db, err = {:?}", &err);
+                Ok(res) => match insert_online(con, &res.uuid, true).await {
+                    Some(_) => Ok(()),
+                    None => {
+                        error!(target: "app", "process_mqtt_message - cannot insert/update online in db");
                         bail!("Cannot insert/update online in db")
                     }
                 },
