@@ -6,7 +6,7 @@ use paho_mqtt::Message;
 use redis::aio::MultiplexedConnection;
 
 use online::config::{init, Env};
-use online::db::online::insert_online;
+use online::db::online::insert_or_update_online;
 use online::errors::message_error::MessageError;
 use online::models::notification::Notification;
 use online::models::payload_trait::OnlineMqttPayload;
@@ -64,7 +64,7 @@ async fn process_mqtt_message(
             Err(anyhow::Error::from(MessageError::EmptyMessageError))
         } else {
             match serde_json::from_str::<Notification<OnlineMqttPayload>>(get_string_payload(msg).as_str()) {
-                Ok(res) => match insert_online(con, &res.uuid, true).await {
+                Ok(res) => match insert_or_update_online(con, &res.uuid, &res.api_token).await {
                     Some(_) => Ok(()),
                     None => {
                         error!(target: "app", "process_mqtt_message - cannot insert/update online in db");
