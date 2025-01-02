@@ -1,9 +1,8 @@
 use log::{debug, error, info, warn};
 use std::time::Duration;
 
-use anyhow::bail;
 use paho_mqtt::Message;
-use redis::aio::MultiplexedConnection;
+use redis::aio::ConnectionManager;
 
 use online::config::{init, Env};
 use online::db::online::insert_or_update_online;
@@ -24,7 +23,7 @@ async fn main() {
 
     // 2. Init and connect to Redis
     let client = redis::Client::open(env.redis_uri.clone()).unwrap();
-    let con = client.get_multiplexed_async_connection().await.unwrap();
+    let con = client.get_connection_manager().await.unwrap();
 
     // 3. Init and connect to MQTT
     info!(target: "app", "Initializing MQTT...");
@@ -52,7 +51,7 @@ async fn main() {
 async fn process_mqtt_message(
     msg_opt: &Option<Message>,
     mqtt_client: &mut MqttClient,
-    con: &MultiplexedConnection,
+    con: &ConnectionManager,
 ) -> Result<(), anyhow::Error> {
     if let Some(msg) = msg_opt {
         debug!(target: "app", "process_mqtt_message - MQTT message received");
@@ -65,10 +64,10 @@ async fn process_mqtt_message(
         } else {
             match serde_json::from_str::<Notification<OnlineMqttPayload>>(get_string_payload(msg).as_str()) {
                 Ok(res) => match insert_or_update_online(con, &res.uuid, &res.api_token).await {
-                    Some(_) => Ok(()),
-                    None => {
-                        error!(target: "app", "process_mqtt_message - cannot insert/update online in db");
-                        bail!("Cannot insert/update online in db")
+                    Ok(_) => Ok(()),
+                    Err(err) => {
+                        error!(target: "app", "process_mqtt_message - cannot insert/update online in db, err = {:?}", &err);
+                        Err(err)
                     }
                 },
                 Err(err) => {
