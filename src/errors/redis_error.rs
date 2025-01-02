@@ -5,8 +5,8 @@ use thiserror::Error;
 pub enum RedisError {
     #[error("Cannot check if key exists error")]
     IsExistsError,
-    #[error("Cannot set values error")]
-    HsetError,
-    #[error("Set values result error")]
-    HsetResultError,
+    #[error("Cannot HSet values error")]
+    HSetError,
+    #[error("HSet values result error")]
+    HSetResultError,
 }

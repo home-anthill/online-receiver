@@ -1,23 +1,23 @@
-use log::{debug, info};
+use log::debug;
 use std::env;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::errors::redis_error::RedisError;
 use redis::{aio::ConnectionManager, AsyncCommands, RedisResult, Value};
+
+use crate::errors::redis_error::RedisError;
 
 pub async fn insert_or_update_online(
     con: &ConnectionManager,
     uuid: &str,
     api_token: &str,
 ) -> Result<(), anyhow::Error> {
-    info!(target: "app", "insert_or_update_online - Called");
+    debug!(target: "app", "insert_or_update_online - called");
     let mut con = con.clone();
 
     let db_key = from_uuid_to_db_key(uuid);
 
     let is_exists_res: RedisResult<Value> = con.exists(db_key.as_str()).await;
     if is_exists_res.is_err() {
-        debug!(target: "app", "insert_or_update_online - Cannot check if key exists in redis");
         return Err(anyhow::Error::from(RedisError::IsExistsError));
     }
     let is_exists: Value = is_exists_res?;
@@ -44,15 +44,14 @@ pub async fn insert_or_update_online(
         )
         .await;
     if hset_res.is_err() {
-        debug!(target: "app", "insert_or_update_online - Cannot set multiple values in redis");
-        return Err(anyhow::Error::from(RedisError::HsetError));
+        return Err(anyhow::Error::from(RedisError::HSetError));
     }
     let hset: Value = hset_res?;
     debug!(target: "app", "insert_or_update_online - hset = {:?}", hset);
     if hset == Value::Okay {
         Ok(())
     } else {
-        Err(anyhow::Error::from(RedisError::HsetResultError))
+        Err(anyhow::Error::from(RedisError::HSetResultError))
     }
 }
 
