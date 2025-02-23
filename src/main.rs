@@ -4,7 +4,7 @@ use std::time::Duration;
 use paho_mqtt::Message;
 use redis::aio::ConnectionManager;
 
-use online::config::{init, Env};
+use online::config::{Env, init};
 use online::db::online::insert_or_update_online;
 use online::errors::message_error::MessageError;
 use online::models::notification::Notification;

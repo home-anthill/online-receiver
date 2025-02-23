@@ -2,7 +2,7 @@ use log::debug;
 use std::env;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use redis::{aio::ConnectionManager, AsyncCommands, RedisResult, Value};
+use redis::{AsyncCommands, RedisResult, Value, aio::ConnectionManager};
 
 use crate::errors::redis_error::RedisError;
 

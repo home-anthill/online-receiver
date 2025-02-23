@@ -1,5 +1,5 @@
 use log::{debug, error, info, warn};
-use std::fs::{read, remove_file, File};
+use std::fs::{File, read, remove_file};
 use std::io::Write;
 use std::path::Path;
 use std::string::String;
@@ -10,8 +10,8 @@ use paho_mqtt::{
 };
 
 use crate::errors::mqtt_error::MqttError;
-use crate::mqtt::mqtt_config::MqttConfig;
 use crate::mqtt::COMBINED_CA_FILES_PATH;
+use crate::mqtt::mqtt_config::MqttConfig;
 
 pub struct MqttOptions {
     pub create_opts: CreateOptions,
