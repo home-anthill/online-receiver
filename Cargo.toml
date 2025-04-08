@@ -21,7 +21,7 @@ panic = "abort"
 [dependencies]
 thiserror = "2.0.11"
 anyhow = "1.0.96"
-tokio = { version = "^1.43.0", features = ["full"] }
+tokio = { version = "^1.43.1", features = ["full"] }
 redis = { version = "^0.29.0", features = ["tokio-comp", "connection-manager", "aio", "ahash", "r2d2"] }
 paho-mqtt = "0.13.1"
 log = "^0.4.26"
