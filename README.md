@@ -21,7 +21,7 @@ GitHub releases [HERE](https://github.com/home-anthill/online-receiver/releases)
 
 Versions:
 
-- ??/12/2024 - 1.0.0
+- ??/05/2025 - 1.0.0
 
 
 ## :sparkling_heart: A big thank you to :sparkling_heart:
@@ -35,7 +35,7 @@ Versions:
 
 The MIT License (MIT)
 
-Copyright (c) 2021-2024 Stefano Cappa (Ks89)
+Copyright (c) 2021-2025 Stefano Cappa (Ks89)
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
