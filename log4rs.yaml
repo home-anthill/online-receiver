@@ -1,7 +1,7 @@
 appenders:
   stdout:
     kind: console
-  app:
+  file:
     kind: rolling_file
     path: logs/app.log
     encoder:
@@ -22,7 +22,7 @@ root:
     - stdout
 
 loggers:
-  app:
+  file:
     level: debug
     appenders:
       - app
