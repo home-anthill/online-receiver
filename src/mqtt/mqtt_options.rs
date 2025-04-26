@@ -1,9 +1,10 @@
-use log::{debug, error, info, warn};
 use std::fs::{File, read, remove_file};
 use std::io::Write;
 use std::path::Path;
 use std::string::String;
 use std::{env, time::Duration};
+
+use tracing::{debug, error, info, warn};
 
 use paho_mqtt::{
     ConnectOptions, ConnectOptionsBuilder, CreateOptions, CreateOptionsBuilder, Message, SslOptions, SslOptionsBuilder,

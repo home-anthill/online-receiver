@@ -1,5 +1,5 @@
-use log::{debug, error};
 use serde::{Deserialize, Serialize};
+use tracing::{debug, error};
 
 use crate::models::message::Message;
 use crate::models::notification::Notification;

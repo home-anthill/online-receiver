@@ -1,6 +1,7 @@
-use log::{debug, error};
-use paho_mqtt::Message;
 use std::string::String;
+
+use paho_mqtt::Message;
+use tracing::{debug, error};
 
 use crate::models::get_msg_byte;
 use crate::models::topic::Topic;

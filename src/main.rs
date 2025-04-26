@@ -1,8 +1,8 @@
-use log::{debug, error, info, warn};
 use std::time::Duration;
 
 use paho_mqtt::Message;
 use redis::aio::ConnectionManager;
+use tracing::{debug, error, info, warn};
 
 use online::config::{Env, init};
 use online::db::online::insert_or_update_online;

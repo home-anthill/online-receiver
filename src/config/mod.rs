@@ -1,6 +1,8 @@
 use dotenvy::dotenv;
-use log::info;
 use serde::Deserialize;
+use tracing::{Metadata, info};
+use tracing_appender::rolling::{RollingFileAppender, Rotation};
+use tracing_subscriber::fmt::writer::MakeWriterExt;
 
 #[derive(Deserialize, Debug)]
 pub struct Env {
@@ -17,13 +19,47 @@ pub struct Env {
     pub mqtt_key_file: String,
 }
 
+fn filter_target(meta: &Metadata) -> bool {
+    meta.target() == "app"
+}
+
+fn skip_filter_target(_meta: &Metadata) -> bool {
+    true
+}
+
 pub fn init() -> Env {
-    // Init logger if not in testing environment
-    let _ = log4rs::init_file("log4rs.yaml", Default::default());
-    info!(target: "app", "Starting application...");
     // Load the .env file
     dotenv().ok();
     let env = envy::from_env::<Env>().ok().unwrap();
+
+    // Configure logging
+    let stdout = std::io::stdout;
+    let debug_file = RollingFileAppender::builder()
+        .rotation(Rotation::DAILY)
+        .filename_prefix("all")
+        .filename_suffix("log")
+        .max_log_files(5)
+        .build("./logs")
+        .expect("initializing rolling debug_file appender failed")
+        .with_filter(|meta| meta.target() == "app");
+    let error_file = RollingFileAppender::builder()
+        .rotation(Rotation::DAILY)
+        .filename_prefix("error")
+        .filename_suffix("log")
+        .max_log_files(5)
+        .build("./logs")
+        .expect("initializing rolling error_file appender failed")
+        .with_filter(|meta| meta.target() == "app")
+        .with_max_level(tracing::Level::ERROR);
+    let writer = debug_file.and(error_file).and(stdout);
+    tracing_subscriber::fmt()
+        .compact()
+        .with_writer(writer)
+        .with_ansi(false)
+        .init();
+
+    info!(target: "app", "Starting application...");
+
     // Print .env vars
     print_env(&env);
     env
