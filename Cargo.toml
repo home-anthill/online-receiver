@@ -19,11 +19,11 @@ opt-level = 3
 panic = "abort"
 
 [dependencies]
-thiserror = "2.0.12"
-anyhow = "1.0.98"
-tokio = { version = "^1.44.2", features = ["full"] }
-redis = { version = "^0.30.0", features = ["tokio-comp", "connection-manager", "aio", "ahash", "r2d2"] }
-paho-mqtt = "0.13.2"
+thiserror = "2.0.16"
+anyhow = "1.0.99"
+tokio = { version = "^1.47.1", features = ["full"] }
+redis = { version = "^0.32.5", features = ["tokio-comp", "connection-manager", "aio", "ahash", "r2d2"] }
+paho-mqtt = "0.13.3"
 tracing = "^0.1.41"
 tracing-appender = "^0.2.3"
 tracing-subscriber = { version = "^0.3.19", features = ["env-filter"] }
@@ -36,11 +36,11 @@ futures = "^0.3.31"
 # using #[derive(Serialize, Deserialize)] to make Serde work with structs
 # and enums defined in your crate.
 serde = { version = "^1.0.219", features = ["derive"] }
-serde_json = "^1.0.140"
+serde_json = "^1.0.143"
 
 [dev-dependencies]
 # better looking rust assertions
 pretty_assertions = "^1.4.1"
 # include also serde_json with the feature 'preserve_order' to don't change the order of keys
 # 'preserve_order' is required to compare results in a predictible way in testing
-serde_json = { version = "^1.0.140", features = ["preserve_order"] }
+serde_json = { version = "^1.0.143", features = ["preserve_order"] }
