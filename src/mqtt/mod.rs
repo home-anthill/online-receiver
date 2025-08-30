@@ -59,6 +59,7 @@ mod tests {
     }
 
     #[test]
+    #[test_log::test]
     fn ok_get_bytes_from_payload() {
         // init logger and env
         let _ = init();
