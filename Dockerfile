@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1
-FROM rust:bookworm AS chef
+FROM rust:trixie AS chef
 
 # some cargo dependencies require additional packages
 # to build the project.
@@ -37,7 +37,7 @@ COPY . .
 RUN cargo build --release
 
 
-FROM debian:bookworm-slim AS runtime
+FROM debian:trixie-slim AS runtime
 
 # to be able to use ROOT CAs file from /etc/ssl/certs/
 # folder, you must install the 'ca-certificates' package
