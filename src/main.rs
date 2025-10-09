@@ -14,7 +14,7 @@ use online::mqtt::mqtt_config::MqttConfig;
 use online::mqtt::mqtt_options::MqttOptions;
 use online::mqtt::{get_bytes_from_payload, get_string_payload};
 
-const TOPICS: &[&str] = &["online/+"];
+const TOPICS: &[&str] = &["online/+/features/+"];
 
 #[tokio::main]
 async fn main() {
@@ -63,13 +63,15 @@ async fn process_mqtt_message(
             Err(anyhow::Error::from(MessageError::EmptyMessageError))
         } else {
             match serde_json::from_str::<Notification<OnlineMqttPayload>>(get_string_payload(msg).as_str()) {
-                Ok(res) => match insert_or_update_online(con, &res.uuid, &res.api_token).await {
-                    Ok(_) => Ok(()),
-                    Err(err) => {
-                        error!(target: "app", "process_mqtt_message - cannot insert/update online in db, err = {:?}", &err);
-                        Err(err)
+                Ok(res) => {
+                    match insert_or_update_online(con, &res.api_token, &res.device_uuid, &res.feature_uuid).await {
+                        Ok(_) => Ok(()),
+                        Err(err) => {
+                            error!(target: "app", "process_mqtt_message - cannot insert/update online in db, err = {:?}", &err);
+                            Err(err)
+                        }
                     }
-                },
+                }
                 Err(err) => {
                     error!(target: "app", "process_mqtt_message - cannot parse message as Notification, err = {:?}", &err);
                     // quickest way to return anyhow error from string as explained here https://docs.rs/anyhow/latest/anyhow/

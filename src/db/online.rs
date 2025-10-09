@@ -8,13 +8,14 @@ use crate::errors::redis_error::RedisError;
 
 pub async fn insert_or_update_online(
     con: &ConnectionManager,
-    uuid: &str,
     api_token: &str,
+    device_uuid: &str,
+    feature_uuid: &str,
 ) -> Result<(), anyhow::Error> {
     debug!(target: "app", "insert_or_update_online - called");
     let mut con = con.clone();
 
-    let db_key = from_uuid_to_db_key(uuid);
+    let db_key = from_uuid_to_db_key(device_uuid, feature_uuid);
 
     let is_exists_res: RedisResult<Value> = con.exists(db_key.as_str()).await;
     if is_exists_res.is_err() {
@@ -55,7 +56,7 @@ pub async fn insert_or_update_online(
     }
 }
 
-pub fn from_uuid_to_db_key(uuid: &str) -> String {
+pub fn from_uuid_to_db_key(device_uuid: &str, feature_uuid: &str) -> String {
     let env = env::var("ENV").ok().unwrap_or("".to_string());
-    if env == "testing" { "test-" } else { "online-" }.to_owned() + uuid
+    if env == "testing" { "test_" } else { "online_" }.to_owned() + device_uuid + "_feature_" + feature_uuid
 }

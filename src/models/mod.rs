@@ -25,8 +25,13 @@ where
     match parsed_result {
         Ok(val) => {
             debug!(target: "app", "message_payload_to_bytes - parsed from JSON string, returning as byte array");
-            let serialized =
-                Message::<T>::new_as_json(val.uuid.clone(), val.api_token.clone(), topic.clone(), val.payload);
+            let serialized = Message::<T>::new_as_json(
+                val.api_token.clone(),
+                val.device_uuid.clone(),
+                val.feature_uuid.clone(),
+                topic.clone(),
+                val.payload,
+            );
             serialized.into_bytes()
         }
         Err(err) => {

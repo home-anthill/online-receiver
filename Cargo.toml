@@ -1,6 +1,6 @@
 [package]
 name = "ks89-online-receiver"
-version = "1.1.0"
+version = "2.0.0"
 edition = "2024"
 resolver = "3"
 
@@ -19,8 +19,8 @@ opt-level = 3
 panic = "abort"
 
 [dependencies]
-thiserror = "2.0.16"
-anyhow = "1.0.99"
+thiserror = "2.0.17"
+anyhow = "1.0.100"
 tokio = { version = "^1.47.1", features = ["full"] }
 redis = { version = "^0.32.5", features = ["tokio-comp", "connection-manager", "aio", "ahash", "r2d2"] }
 paho-mqtt = "0.13.3"
@@ -35,7 +35,7 @@ futures = "^0.3.31"
 # The "derive" feature is only required when
 # using #[derive(Serialize, Deserialize)] to make Serde work with structs
 # and enums defined in your crate.
-serde = { version = "^1.0.225", features = ["derive"] }
+serde = { version = "^1.0.228", features = ["derive"] }
 serde_json = "^1.0.145"
 
 [dev-dependencies]
