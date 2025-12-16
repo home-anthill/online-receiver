@@ -21,12 +21,12 @@ panic = "abort"
 [dependencies]
 thiserror = "2.0.17"
 anyhow = "1.0.100"
-tokio = { version = "^1.47.1", features = ["full"] }
-redis = { version = "^0.32.5", features = ["tokio-comp", "connection-manager", "aio", "ahash", "r2d2"] }
+tokio = { version = "^1.48.0", features = ["full"] }
+redis = { version = "^1.0.1", features = ["tokio-comp", "connection-manager", "aio", "ahash", "r2d2"] }
 paho-mqtt = "0.13.3"
-tracing = "^0.1.41"
-tracing-appender = "^0.2.3"
-tracing-subscriber = { version = "^0.3.20", features = ["env-filter"] }
+tracing = "^0.1.43"
+tracing-appender = "^0.2.4"
+tracing-subscriber = { version = "^0.3.22", features = ["env-filter"] }
 dotenvy = "^0.15.7"
 envy = "^0.4.2"
 futures = "^0.3.31"
@@ -44,4 +44,4 @@ pretty_assertions = "^1.4.1"
 # include also serde_json with the feature 'preserve_order' to don't change the order of keys
 # 'preserve_order' is required to compare results in a predictible way in testing
 serde_json = { version = "^1.0.145", features = ["preserve_order"] }
-test-log = {version = "0.2.18", features = ["trace"]}
+test-log = {version = "0.2.19", features = ["trace"]}
