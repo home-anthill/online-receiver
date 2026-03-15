@@ -37,12 +37,11 @@ COPY . .
 RUN cargo build --release
 
 
-FROM debian:trixie-slim AS runtime
+FROM dhi.io/debian-base:trixie AS runtime
 
 # to be able to use ROOT CAs file from /etc/ssl/certs/
-# folder, you must install the 'ca-certificates' package
-RUN apt-get update && apt-get install -y \
-    ca-certificates
+# folder, you must install the 'ca-certificates' package or use
+# an image with 'ca-certificates' pre-installed.
 
 WORKDIR /app
 
