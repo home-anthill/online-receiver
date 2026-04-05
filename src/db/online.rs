@@ -1,10 +1,15 @@
 use std::env;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use redis::{AsyncCommands, RedisResult, Value, aio::ConnectionManager};
-use tracing::debug;
+use redis::{AsyncCommands, aio::ConnectionManager};
+use tracing::{debug, error};
+use uuid::Uuid;
 
 use crate::errors::redis_error::RedisError;
+
+fn is_valid_uuid_v4(s: &str) -> bool {
+    Uuid::parse_str(s).map(|u| u.get_version_num() == 4).unwrap_or(false)
+}
 
 pub async fn insert_or_update_online(
     con: &ConnectionManager,
@@ -13,50 +18,40 @@ pub async fn insert_or_update_online(
     feature_uuid: &str,
 ) -> Result<(), anyhow::Error> {
     debug!(target: "app", "insert_or_update_online - called");
+
+    if !is_valid_uuid_v4(api_token) {
+        return Err(RedisError::InvalidUuidError.into());
+    }
+    if !is_valid_uuid_v4(device_uuid) {
+        return Err(RedisError::InvalidUuidError.into());
+    }
+    if !is_valid_uuid_v4(feature_uuid) {
+        return Err(RedisError::InvalidUuidError.into());
+    }
+
     let mut con = con.clone();
 
     let db_key = from_uuid_to_db_key(device_uuid, feature_uuid);
 
-    let is_exists_res: RedisResult<Value> = con.exists(db_key.as_str()).await;
-    if is_exists_res.is_err() {
-        return Err(anyhow::Error::from(RedisError::IsExistsError));
-    }
-    let is_exists: Value = is_exists_res?;
-    let field_to_set = if is_exists == Value::Int(1) {
-        "modifiedAt"
-    } else {
-        "createdAt"
-    };
+    let is_exists: bool = con.exists(&db_key).await.map_err(|e| {
+        error!(target: "app", "insert_or_update_online - Redis exists error: {:?}", e);
+        RedisError::IsExistsError
+    })?;
+    let field_to_set = if is_exists { "modifiedAt" } else { "createdAt" };
 
-    let hset_res: RedisResult<Value> = con
-        .hset_multiple(
-            db_key.as_str(),
-            &[
-                ("apiToken", api_token),
-                (
-                    field_to_set,
-                    SystemTime::now()
-                        .duration_since(UNIX_EPOCH)?
-                        .as_millis()
-                        .to_string()
-                        .as_str(),
-                ),
-            ],
-        )
-        .await;
-    if hset_res.is_err() {
-        return Err(anyhow::Error::from(RedisError::HSetError));
-    }
-    let hset: Value = hset_res?;
-    debug!(target: "app", "insert_or_update_online - hset = {:?}", hset);
-    if hset == Value::Okay {
-        Ok(())
-    } else {
-        Err(anyhow::Error::from(RedisError::HSetResultError))
-    }
+    let timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis().to_string();
+    let (): () = con
+        .hset_multiple(&db_key, &[("apiToken", api_token), (field_to_set, timestamp.as_str())])
+        .await
+        .map_err(|e| {
+            error!(target: "app", "insert_or_update_online - Redis hset error: {:?}", e);
+            RedisError::HSetError
+        })?;
+    debug!(target: "app", "insert_or_update_online - hset completed");
+    Ok(())
 }
 
 pub fn from_uuid_to_db_key(device_uuid: &str, feature_uuid: &str) -> String {
-    let env = env::var("ENV").ok().unwrap_or("".to_string());
-    if env == "testing" { "test_" } else { "online_" }.to_owned() + device_uuid + "_feature_" + feature_uuid
+    let prefix = if env::var("ENV").as_deref() == Ok("testing") { "test" } else { "online" };
+    format!("{}_{}_feature_{}", prefix, device_uuid, feature_uuid)
 }

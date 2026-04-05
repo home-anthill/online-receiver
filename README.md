@@ -21,6 +21,7 @@ GitHub releases [HERE](https://github.com/home-anthill/online-receiver/releases)
 
 Versions:
 
+- ??/??/2026 - 3.0.0
 - 16/03/2026 - 2.0.3
 - 15/03/2026 - 2.0.2
 - 12/03/2026 - 2.0.1

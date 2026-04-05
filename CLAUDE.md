@@ -1,0 +1,93 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+## Project Overview
+
+online-receiver is a Rust microservice in the [home-anthill](https://github.com/home-anthill/docs) smart home system. It subscribes to MQTT topics (`online/+/features/+`), parses incoming JSON notifications, and stores/updates device online status in Redis with timestamps.
+
+## Build & Development Commands
+
+All common tasks are available via `make`:
+
+| Command | Description |
+|---------|-------------|
+| `make build` | Format + lint + debug build |
+| `make release` | Format + lint + release build |
+| `make test` | Run tests (RUST_BACKTRACE=full, single-threaded) |
+| `make test-coverage` | Generate code coverage via grcov |
+| `make fmt` | Format code with `cargo fmt` |
+| `make lint` | Lint with `cargo clippy` |
+| `make check` | Audit dependencies for vulnerabilities (`cargo audit`) |
+| `make run` | Format + lint + watch mode (requires cargo-watch) |
+| `make deps` | Install all dev dependencies |
+| `make clean` | Remove build artifacts |
+
+Run a single test: `cargo test <test_name> -- --nocapture --test-threads 1`
+
+## Architecture
+
+**Structure:** The service is split into a library (`src/lib.rs`) and binary (`src/main.rs`). The binary orchestrates initialization and the main loop; the library exports all logic for potential reuse.
+
+**Entry point:** `src/main.rs` — tokio async main that initializes config, connects to Redis (with optional authentication), sets up MQTT client, and runs the message processing loop.
+
+**Module structure:**
+- **config/** — `Env` struct deserialized from environment variables (with `#[serde(default)]` for optional fields like `redis_username` and `redis_password` to maintain backwards compatibility); logging setup (daily rolling files via tracing)
+- **mqtt/** — `MqttClient` (async paho-mqtt wrapper), `MqttOptions` (connection/TLS builder with proper error propagation), `MqttConfig`, `get_string_payload` / `get_bytes_from_payload` helpers; subscribes at QoS 0 with `clean_session(false)` (persistent session survives reconnects)
+- **db/** — `insert_or_update_online()` — Redis hash keyed as `online_{device_uuid}_feature_{feature_uuid}`; on first write sets `apiToken` + `createdAt` (Unix ms); on update sets `apiToken` + `modifiedAt` (Unix ms); all three UUIDs (`api_token`, `device_uuid`, `feature_uuid`) validated as UUIDv4 to prevent Redis key injection
+- **models/** — Two distinct envelope types: `Notification<T>` is the raw MQTT JSON (just `apiToken`, `deviceUuid`, `featureUuid`, `payload`); `Message<T>` is the internal form that additionally embeds the parsed `Topic`. `OnlineMqttPayload` is intentionally empty — the `payload` field in incoming JSON is always `{}`. `Topic` parses `online/{device_uuid}/features/{feature_uuid}` topic strings.
+- **errors/** — Custom error enums via `thiserror` (`MessageError` with `PayloadTooLargeError`, `RedisError` with `InvalidUuidError`, `MqttError` with `SslConfigError`)
+
+**Message flow:** MQTT message → size-check payload (64 KiB limit) → validate UTF-8 → parse JSON as `Notification<OnlineMqttPayload>` → validate all three UUIDs (v4) → insert/update Redis hash with timestamp (Unix ms) → reconnect on disconnection (5s retry).
+
+## Code Style
+
+- Rust 2024 edition
+- Formatting: `rustfmt.toml` — 4-space indent, 120 char line width
+- EditorConfig: 2-space indent for non-Rust files, UTF-8, LF
+- Error handling: `thiserror` for domain errors, `anyhow` for propagation; use `X.into()` not `anyhow::Error::from(X)`
+- Prefer `&str` over `&String` and pass `bool`/`Copy` types by value, not reference
+- Use `DeserializeOwned` instead of `Deserialize<'a>` when the deserialized value does not borrow from the input
+- Use `inspect_err(|e| error!(...))` + `?` instead of `match Ok/Err` blocks used only for logging
+- Use `Duration::from_secs` not `Duration::from_millis` for whole-second durations
+- Async/await throughout (tokio runtime)
+- Combined CA file for TLS is written atomically to `/tmp/rootca_and_cert.pem`
+
+## Security Conventions
+
+- **Redis key injection prevention**: All three MQTT payload UUIDs (`api_token`, `device_uuid`, `feature_uuid`) are validated as UUIDv4 before interpolation into Redis keys. Untrusted input is never concatenated directly into keys; validation happens first using the `uuid` crate.
+- MQTT payload size is capped at 64 KiB (`MAX_PAYLOAD_BYTES`) before JSON deserialization to prevent excessive memory allocation
+- MQTT credentials are never logged — username logged as `[REDACTED]`, password not logged at all
+- Redis credentials are never logged (though their presence in the constructed URI is noted in logs)
+- LWT (Last Will and Testament) message is published to `online/lwt` (service-scoped topic) rather than a generic topic
+- SSL/TLS errors are propagated with context (via `SslConfigError` variant) — no `.unwrap()` on certificate operations
+- Combined CA file is written atomically using `OpenOptions::truncate(true)` to prevent TOCTOU race conditions
+
+## Testing
+
+- Tests are inline `#[cfg(test)]` modules (no separate `tests/` directory)
+- Tests require Redis and Mosquitto (MQTT broker) running locally
+- CI uses `ENV=testing` to skip file-based logging
+- Test Redis keys use `test_` prefix (via `from_uuid_to_db_key` which checks `ENV`)
+- Tests run single-threaded: `--test-threads 1`
+
+## Docker
+
+5-stage build using `cargo-chef` for dependency caching:
+1. **Chef** — base image (`rust:trixie`) with build tools + cargo-chef installed
+2. **Planner** — generates `recipe.json` from the source tree
+3. **Builder** — cooks dependencies then compiles the release binary
+4. **system-deps** (`debian:trixie-slim`) — installs CA certs; pre-creates `/app/logs` owned by UID 65534
+5. **Runtime** (`dhi.io/debian-base:trixie`) — hardened image, no package manager; copies CA certs, app dir, and binary; runs as UID 65534 (`nobody`)
+
+```bash
+docker build -t ks89/online-receiver:latest .
+```
+
+## Environment Variables
+
+See `.env_template` for all required variables. Key settings:
+
+- **Redis**: `REDIS_URI` (connection string), `REDIS_USERNAME` (optional, defaults to empty), `REDIS_PASSWORD` (optional). If both are set, credentials are injected into the URI before connecting (e.g., `redis://host:port` becomes `redis://user:pass@host:port`). If username is set but password is empty, a warning is logged and no authentication is attempted.
+- **MQTT**: `MQTT_URL`, `MQTT_PORT`, `MQTT_AUTH`, `MQTT_USER`, `MQTT_PASSWORD`, `MQTT_TLS`, `ROOT_CA`, `MQTT_CERT_FILE`, `MQTT_KEY_FILE`
+- **Logging**: `LOG_LEVEL` controls tracing filter (debug, info, warn, error)

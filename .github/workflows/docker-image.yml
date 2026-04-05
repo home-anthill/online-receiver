@@ -39,7 +39,11 @@ jobs:
         with:
           toolchain: stable
           # target: x86_64-unknown-linux-musl
-          components: clippy, llvm-tools-preview
+          components: clippy, rustfmt, llvm-tools-preview
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+      - name: Install tools
+        run: cargo install grcov cargo-audit
       - name: Install Make
         run: sudo apt-get install -y make
       - name: Install and start Mosquitto
@@ -59,16 +63,18 @@ jobs:
         uses: shogo82148/actions-setup-redis@v1
         with:
           redis-version: "8.x"
+          redis-conf: |
+            user redisuser on >Password1! ~* +@all
+      - name: Run security audit
+        run: cargo audit
       - name: Run tests
         run: |
           cp .env_template .env
-          echo "Installing dependencies"
-          make deps-ci
-          echo "Running tests"
           make test-coverage
 
   build:
     name: Build and publish
+    needs: test
     runs-on: ubuntu-latest
     timeout-minutes: 25
 

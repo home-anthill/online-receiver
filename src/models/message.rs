@@ -20,14 +20,8 @@ impl<T> Message<T>
 where
     T: PayloadTrait + Sized + Serialize,
 {
-    pub fn new(api_token: String, device_uuid: String, feature_uuid: String, topic: Topic, payload: T) -> Message<T> {
-        Self {
-            api_token,
-            device_uuid,
-            feature_uuid,
-            topic,
-            payload,
-        }
+    pub fn new(api_token: String, device_uuid: String, feature_uuid: String, topic: Topic, payload: T) -> Self {
+        Self { api_token, device_uuid, feature_uuid, topic, payload }
     }
     pub fn new_as_json(
         api_token: String,
@@ -35,8 +29,8 @@ where
         feature_uuid: String,
         topic: Topic,
         payload: T,
-    ) -> String {
+    ) -> Result<String, serde_json::Error> {
         let message = Self::new(api_token, device_uuid, feature_uuid, topic, payload);
-        serde_json::to_string(&message).unwrap()
+        serde_json::to_string(&message)
     }
 }

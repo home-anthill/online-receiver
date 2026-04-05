@@ -7,4 +7,6 @@ pub enum MessageError {
     EmptyMessageError,
     #[error("Cannot parse message payload error")]
     ParseMessageError,
+    #[error("Message payload exceeds maximum allowed size")]
+    PayloadTooLargeError,
 }

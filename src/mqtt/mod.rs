@@ -1,8 +1,7 @@
-use std::string::String;
-
 use paho_mqtt::Message;
 use tracing::{debug, error};
 
+use crate::errors::message_error::MessageError;
 use crate::models::get_msg_byte;
 use crate::models::topic::Topic;
 
@@ -10,26 +9,31 @@ pub mod mqtt_client;
 pub mod mqtt_config;
 pub mod mqtt_options;
 
-const COMBINED_CA_FILES_PATH: &str = "./rootca_and_cert.pem";
+const COMBINED_CA_FILES_PATH: &str = "/tmp/rootca_and_cert.pem";
+const MAX_PAYLOAD_BYTES: usize = 65_536; // 64 KiB
 
-pub fn get_bytes_from_payload(msg: &Message) -> Vec<u8> {
-    let payload: String = get_string_payload(msg);
-    let topic: Topic = Topic::new(msg.topic());
+pub fn get_bytes_from_payload(msg: &Message) -> Result<Vec<u8>, anyhow::Error> {
+    let payload = get_string_payload(msg)?;
+    let topic = Topic::new(msg.topic()).inspect_err(|err| {
+        error!(target: "app", "get_bytes_from_payload - cannot parse MQTT topic '{}': {:?}", msg.topic(), err);
+    })?;
     debug!(target: "app", "get_bytes_from_payload - MQTT message topic = {}", &topic);
-    let msg_byte: Vec<u8> = get_msg_byte(&topic, &payload);
-    msg_byte
+    get_msg_byte(&topic, &payload)
 }
 
-pub fn get_string_payload(msg: &Message) -> String {
+pub fn get_string_payload(msg: &Message) -> Result<String, anyhow::Error> {
+    if msg.payload().len() > MAX_PAYLOAD_BYTES {
+        error!(target: "app", "get_string_payload - MQTT payload too large: {} bytes (max {})", msg.payload().len(), MAX_PAYLOAD_BYTES);
+        return Err(anyhow::Error::from(MessageError::PayloadTooLargeError));
+    }
     match std::str::from_utf8(msg.payload()) {
         Ok(res) => {
             debug!(target: "app", "get_string_payload - MQTT utf8 payload_str: {}", res);
-            res.to_string()
+            Ok(res.to_string())
         }
         Err(err) => {
-            // this shouldn't happen, because payload in Message is a Vec<u8>
             error!(target: "app", "get_string_payload - Cannot read MQTT message payload as utf8. Error = {:?}", err);
-            "".to_string()
+            Err(anyhow::Error::from(MessageError::ParseMessageError))
         }
     }
 }
@@ -70,7 +74,7 @@ mod tests {
         let device_uuid = "246e3256-f0dd-4fcb-82c5-ee20c2267eeb";
         let feature_uuid = "6ba7ed96-a041-44a5-8b90-98e66eacfeee";
         let api_token = "473a4861-632b-4915-b01e-cf1d418966c6";
-        let topic: Topic = Topic::new(format!("online/{}/features/{}", device_uuid, feature_uuid).as_str());
+        let topic = Topic::new(&format!("online/{}/features/{}", device_uuid, feature_uuid)).unwrap();
         let msg_payload = r#"{"apiToken":""#.to_owned()
             + api_token
             + r#"", "deviceUuid":""#
@@ -78,15 +82,11 @@ mod tests {
             + r#"", "featureUuid":""#
             + feature_uuid
             + r#"","payload":{}}"#;
-        let msg_byte_arr: Vec<u8> = get_msg_byte(&topic, msg_payload.as_str());
-        let message = Message::new(
-            format!("online/{}/features/{}", device_uuid, feature_uuid),
-            msg_byte_arr,
-            0,
-        );
+        let msg_byte_arr: Vec<u8> = get_msg_byte(&topic, msg_payload.as_str()).unwrap();
+        let message = Message::new(format!("online/{}/features/{}", device_uuid, feature_uuid), msg_byte_arr, 0);
 
         // call function get_bytes_from_payload
-        let bytes = get_bytes_from_payload(&message);
+        let bytes = get_bytes_from_payload(&message).unwrap();
 
         // check result
         let result = from_utf8(bytes.as_slice()).unwrap();

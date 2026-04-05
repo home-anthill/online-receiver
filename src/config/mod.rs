@@ -1,4 +1,5 @@
 use std::env;
+use std::fmt;
 
 use dotenvy::dotenv;
 use serde::Deserialize;
@@ -6,9 +7,35 @@ use tracing::info;
 use tracing_appender::rolling::{RollingFileAppender, Rotation};
 use tracing_subscriber::fmt::writer::MakeWriterExt;
 
-#[derive(Deserialize, Debug)]
+/// Which runtime environment the application is running in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AppEnv {
+    Testing,
+    Production,
+}
+
+impl AppEnv {
+    /// Reads the `ENV` environment variable. Returns `Testing` only when the
+    /// value is exactly `"testing"`; any other value (including absent) is
+    /// treated as `Production`.
+    pub fn from_env() -> Self {
+        match env::var("ENV").as_deref() {
+            Ok("testing") => Self::Testing,
+            _ => Self::Production,
+        }
+    }
+
+    pub fn is_testing(&self) -> bool {
+        matches!(self, Self::Testing)
+    }
+}
+
+#[derive(Deserialize)]
 pub struct Env {
+    pub log_level: Option<String>,
     pub redis_uri: String,
+    pub redis_username: String,
+    pub redis_password: String,
     pub mqtt_url: String,
     pub mqtt_port: u16,
     pub mqtt_client_id: String,
@@ -21,14 +48,55 @@ pub struct Env {
     pub mqtt_key_file: String,
 }
 
-pub fn init() -> Env {
+impl fmt::Debug for Env {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Env")
+            .field("log_level", &self.log_level)
+            .field("redis_uri = {}", &redact_redis_uri(&self.redis_uri))
+            .field("redis_username = {}", &self.redis_username)
+            .field("redis_password = {}", &"***")
+            .field("mqtt_url = {}", &self.mqtt_url)
+            .field("mqtt_port = {}", &self.mqtt_port)
+            .field("mqtt_client_id = {}", &self.mqtt_client_id)
+            .field("mqtt_auth = {}", &self.mqtt_auth)
+            .field("mqtt_user = {}", &"***")
+            .field("mqtt_tls = {}", &self.mqtt_tls)
+            .field("root_ca = {}", &self.root_ca)
+            .field("mqtt_cert_file = {}", &self.mqtt_cert_file)
+            .field("mqtt_key_file = {}", &self.mqtt_key_file)
+            .finish()
+    }
+}
+
+/// Returns the Redis URI with any embedded password replaced by `***`.
+/// e.g. `redis://:secret@host:6379` → `redis://:***@host:6379`
+pub fn redact_redis_uri(uri: &str) -> String {
+    if let Some(at_pos) = uri.rfind('@')
+        && let Some(scheme_end) = uri.find("://")
+    {
+        let scheme_and_authority = &uri[..scheme_end + 3];
+        let host_and_rest = &uri[at_pos..];
+        return format!("{scheme_and_authority}***{host_and_rest}");
+    }
+    uri.to_string()
+}
+
+pub fn init() -> (Env, AppEnv) {
     // Load the .env file
     dotenv().ok();
-    let env = envy::from_env::<Env>().ok().unwrap();
+    let env = envy::from_env::<Env>().expect("failed to parse environment variables");
+    let app_env = AppEnv::from_env();
 
-    // Configure logging if not in test env
-    if env::var("ENV") != Ok("testing".to_string()) {
-        let stdout = std::io::stdout.with_filter(|meta| meta.target() == "app");
+    // Configure logging if not in test env.
+    // We use set_global_default (not .init()) intentionally: .init() would also install
+    // a LogTracer bridge for the `log` crate, which prevents Rocket from installing its
+    // own RocketLogger. Without RocketLogger, Rocket's startup output (routes, config,
+    // launched URL) is silently dropped. By skipping LogTracer, Rocket gets to install
+    // its own logger and prints its startup info directly to stdout.
+    if !app_env.is_testing() {
+        let stdout_max_level =
+            env.log_level.as_deref().and_then(|s| s.parse::<tracing::Level>().ok()).unwrap_or(tracing::Level::DEBUG);
+        let stdout = std::io::stdout.with_filter(|meta| meta.target() == "app").with_max_level(stdout_max_level);
         let debug_file = RollingFileAppender::builder()
             .rotation(Rotation::DAILY)
             .filename_prefix("info")
@@ -47,43 +115,34 @@ pub fn init() -> Env {
             .with_filter(|meta| meta.target() == "app")
             .with_max_level(tracing::Level::ERROR);
         let writer = debug_file.and(error_file).and(stdout);
-        tracing_subscriber::fmt()
+        let subscriber = tracing_subscriber::fmt()
             .compact()
             .with_writer(writer)
             .with_ansi(false)
             .with_max_level(tracing::Level::DEBUG)
-            .init();
+            .finish();
+        tracing::subscriber::set_global_default(subscriber).expect("Unable to install global subscriber");
     }
 
     info!(target: "app", "Starting application...");
 
     // Print .env vars
     print_env(&env);
-    env
+    (env, app_env)
 }
 
 fn print_env(env: &Env) {
-    let redis_uri = env.redis_uri.clone();
-    let mqtt_url = env.mqtt_url.clone();
-    let mqtt_port = env.mqtt_port;
-    let mqtt_client_id = env.mqtt_client_id.clone();
-    let mqtt_auth = env.mqtt_auth;
-    let mqtt_user = env.mqtt_user.clone();
-    let mqtt_password = env.mqtt_password.clone();
-    let mqtt_tls = env.mqtt_tls;
-    let root_ca = env.root_ca.clone();
-    let mqtt_cert_file = env.mqtt_cert_file.clone();
-    let mqtt_key_file = env.mqtt_key_file.clone();
-    info!(target: "app", "env = {:?}", env);
-    info!(target: "app", "redis_uri = {}", redis_uri);
-    info!(target: "app", "mqtt_url = {}", mqtt_url);
-    info!(target: "app", "mqtt_port = {}", mqtt_port);
-    info!(target: "app", "mqtt_client_id = {}", mqtt_client_id);
-    info!(target: "app", "mqtt_auth = {}", mqtt_auth);
-    info!(target: "app", "mqtt_user = {}", mqtt_user);
-    info!(target: "app", "mqtt_password = {}", mqtt_password);
-    info!(target: "app", "mqtt_tls = {}", mqtt_tls);
-    info!(target: "app", "root_ca = {}", root_ca);
-    info!(target: "app", "mqtt_cert_file = {}", mqtt_cert_file);
-    info!(target: "app", "mqtt_key_file = {}", mqtt_key_file);
+    info!(target: "app", "log_level = {}", env.log_level.as_deref().unwrap_or("debug"));
+    info!(target: "app", "redis_uri = {}", redact_redis_uri(&env.redis_uri));
+    info!(target: "app", "redis_username = {}", env.redis_username);
+    info!(target: "app", "redis_password = {}", !env.redis_password.is_empty());
+    info!(target: "app", "mqtt_url = {}", env.mqtt_url);
+    info!(target: "app", "mqtt_port = {}", env.mqtt_port);
+    info!(target: "app", "mqtt_client_id = {}", env.mqtt_client_id);
+    info!(target: "app", "mqtt_auth = {}", env.mqtt_auth);
+    info!(target: "app", "mqtt_user = [REDACTED]");
+    info!(target: "app", "mqtt_tls = {}", env.mqtt_tls);
+    info!(target: "app", "root_ca = {}", env.root_ca);
+    info!(target: "app", "mqtt_cert_file = {}", env.mqtt_cert_file);
+    info!(target: "app", "mqtt_key_file = {}", env.mqtt_key_file);
 }

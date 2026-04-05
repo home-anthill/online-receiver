@@ -1,0 +1,46 @@
+# Changelog (AI-assisted changes)
+
+## Security
+
+**TLS/SSL Certificate Handling Hardened**
+Replaced three `.unwrap()` calls on `SslOptionsBuilder::trust_store`, `key_store`, and `private_key` with proper error propagation via `MqttError::SslConfigError`. Added `SslConfigError(String)` variant to `MqttError`. Malformed certificate input now returns an error instead of crashing the service.
+
+**Sensitive Values Redacted from Logs**
+MQTT username was being logged in plaintext despite a comment claiming all sensitive values were redacted. Changed to log `mqtt_user = [REDACTED]`. Redis credentials are never logged—only the presence of configured credentials is noted in logs.
+
+**Redis Key Injection Prevention**
+All three UUIDs from untrusted MQTT payloads (`api_token`, `device_uuid`, `feature_uuid`) are now validated as UUIDv4 before interpolation into Redis keys using the `uuid` crate. Added `is_valid_uuid_v4` validation function and `InvalidUuidError` variant to `RedisError`. This eliminates the risk of key injection from malformed input passed to Redis.
+
+**MQTT Payload Size Validation**
+Added `MAX_PAYLOAD_BYTES = 65_536` (64 KiB) size check in `get_string_payload` before JSON deserialization. Large payloads are rejected with `MessageError::PayloadTooLargeError` to prevent excessive memory allocation from oversized MQTT messages.
+
+**Combined CA File Handling**
+CA file merging now uses atomic file operations to eliminate time-of-check time-of-use (TOCTOU) race conditions. Replaced the `exists()` check → `remove_file()` → `File::create()` sequence with a single atomic `OpenOptions::new().write(true).create(true).truncate(true).open()` operation. Combined file is written to an absolute path (`/tmp/rootca_and_cert.pem`) rather than CWD-relative paths, removing path-traversal risks from unexpected working-directory changes.
+
+**Last Will and Testament Topic Scoped**
+LWT message is now published to `online/lwt` instead of the generic `test` topic, preventing disconnect events from leaking to unrelated subscribers on that generic topic.
+
+## Idiomatic Rust
+
+**Error Handling Modernized**
+Replaced verbose `anyhow::Error::from(X)` with idiomatic `X.into()` at early-return sites and removed the outer wrapper from `map_err` closures. Simplified error-only logging patterns using `.inspect_err(|err| error!(...))` instead of `match` blocks used solely for logging. Silent error discards in Redis operations (`exists` and `hset_multiple`) now log the original error at `error!` level before returning the domain error variant, improving observability.
+
+**Function Signatures Improved**
+Changed `&String` parameters to `&str` in `merge_ca_files` and `build_connect_options` to accept any string-like value and follow Rust API guidelines. Changed `&bool` parameters to `bool` in `build_connect_options` for `mqtt_auth` and `mqtt_tls`, eliminating unnecessary dereferences inside the function since `bool` is `Copy`. Removed redundant `use std::string::String` imports from multiple modules (prelude item).
+
+**Type Annotations Refined**
+Changed Redis `exists` return type from manual `Value::Int(1)` comparison to idiomatic `bool` by leveraging the `redis` crate's support for direct `bool` returns. Replaced `Deserialize<'a>` with `DeserializeOwned` in `message_payload_to_bytes` to correctly reflect that deserialized values don't borrow from input; since all fields are owned, `DeserializeOwned` (equivalent to `for<'de> Deserialize<'de>`) is the appropriate bound.
+
+**Duration and String Expressions Clarified**
+Replaced `Duration::from_millis(30000)` and `Duration::from_millis(5000)` with `Duration::from_secs(30)` and `Duration::from_secs(5)` to express intent without mental division. Removed redundant `String` → `str` conversions via `.as_str()` since `String` derefs to `str` and `&db_key` is idiomatic. Removed duplicate topic logging in `subscribe` which logged the topic list twice in different formats.
+
+**Error Propagation Improved**
+Changed `let _ = process_mqtt_message(...).await` which silently dropped all processing errors to use `.inspect_err(|err| error!(...))` so failures are visible in logs.
+
+## Configuration
+
+**Redis Authentication Support**
+Added `redis_username` and `redis_password` fields to `Env` struct, both optional with `#[serde(default)]` for backwards compatibility. Fields default to empty string when env vars are absent, preserving compatibility for CI. Credentials are injected into the Redis URI before connection: `redis://host:port` becomes `redis://username:password@host:port`. If only password is set (empty username), the URI becomes `redis://:password@host:port`, compatible with legacy `requirepass` mode. The constructed Redis URL is never logged.
+
+**Environment Template Updated**
+`.env_template` now includes `REDIS_USERNAME=redisuser` and `REDIS_PASSWORD=Password1!` entries, matching the named ACL user created by the local Docker Redis command.

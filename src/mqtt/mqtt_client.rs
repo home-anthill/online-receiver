@@ -1,4 +1,4 @@
-use std::string::String;
+use std::pin::Pin;
 use std::time::Duration;
 
 use futures::stream::StreamExt;
@@ -10,26 +10,22 @@ use crate::mqtt::mqtt_options::MqttOptions;
 pub struct MqttClient {
     conn_opts: ConnectOptions,
     client: AsyncClient,
-    pub message_stream: AsyncReceiver<Option<Message>>,
+    pub message_stream: Pin<Box<AsyncReceiver<Option<Message>>>>,
 }
 
 impl MqttClient {
     pub fn new(options: MqttOptions) -> Result<Self, anyhow::Error> {
         let mut client: AsyncClient = AsyncClient::new(options.create_opts)?;
         // Get message stream before connecting
-        let message_stream = client.get_stream(25);
-        Ok(Self {
-            conn_opts: options.conn_opts,
-            client,
-            message_stream,
-        })
+        let message_stream = Box::pin(client.get_stream(25));
+        Ok(Self { conn_opts: options.conn_opts, client, message_stream })
     }
 
     pub async fn connect(&mut self) {
         info!(target: "app", "connect - Connecting to the MQTT server with ConnectOptions...");
         while let Err(err) = self.client.connect(self.conn_opts.clone()).await {
             error!(target: "app", "connect - MQTT Connection error, retying in 30 seconds. Error = {:?}", err);
-            tokio::time::sleep(Duration::from_millis(30000)).await;
+            tokio::time::sleep(Duration::from_secs(30)).await;
         }
         info!(target: "app", "connect - MQTT Connection succeeded");
     }
@@ -43,7 +39,6 @@ impl MqttClient {
         info!(target: "app", "subscribe - Subscribing to the topics: {:?}", topics_list);
 
         let topics: Vec<String> = topics_list.iter().map(|s| s.to_string()).collect();
-        info!(target: "app", "subscribe - Subscribing to MQTT topics: {:?}", topics);
         let qos = vec![0; topics.len()];
         // We subscribe to the topic(s) we want here.
         match self.client.subscribe_many(&topics, &qos).await {

@@ -1,5 +1,3 @@
-use std::string::String;
-
 use crate::config::Env;
 use crate::mqtt::COMBINED_CA_FILES_PATH;
 

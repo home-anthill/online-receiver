@@ -5,4 +5,6 @@ use thiserror::Error;
 pub enum MqttError {
     #[error("file {0} not found error")]
     FileNotFound(String),
+    #[error("SSL configuration error: {0}")]
+    SslConfigError(String),
 }

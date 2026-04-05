@@ -4,48 +4,64 @@ use paho_mqtt::Message;
 use redis::aio::ConnectionManager;
 use tracing::{debug, error, info, warn};
 
-use online::config::{Env, init};
+use online::config::{AppEnv, Env, init};
 use online::db::online::insert_or_update_online;
-use online::errors::message_error::MessageError;
 use online::models::notification::Notification;
 use online::models::payload_trait::OnlineMqttPayload;
+use online::mqtt::get_string_payload;
 use online::mqtt::mqtt_client::MqttClient;
 use online::mqtt::mqtt_config::MqttConfig;
 use online::mqtt::mqtt_options::MqttOptions;
-use online::mqtt::{get_bytes_from_payload, get_string_payload};
 
 const TOPICS: &[&str] = &["online/+/features/+"];
 
 #[tokio::main]
-async fn main() {
+async fn main() -> Result<(), anyhow::Error> {
     // 1. Init logger and env
-    let env: Env = init();
+    let (env, _app_env): (Env, AppEnv) = init();
 
     // 2. Init and connect to Redis
-    let client = redis::Client::open(env.redis_uri.clone()).unwrap();
-    let con = client.get_connection_manager().await.unwrap();
+    // If credentials are configured, inject them into the URI:
+    //   redis://host:port -> redis://username:password@host:port
+    if !env.redis_username.is_empty() && env.redis_password.is_empty() {
+        warn!(target: "app", "REDIS_USERNAME is set but REDIS_PASSWORD is empty — no authentication will be attempted");
+    }
+    let redis_url = if env.redis_password.is_empty() {
+        env.redis_uri.clone()
+    } else {
+        match env.redis_uri.find("://") {
+            Some(scheme_end) => format!(
+                "{scheme}{username}:{password}@{rest}",
+                scheme = &env.redis_uri[..scheme_end + 3],
+                username = urlencoding::encode(&env.redis_username),
+                password = urlencoding::encode(&env.redis_password),
+                rest = &env.redis_uri[scheme_end + 3..],
+            ),
+            None => {
+                warn!(target: "app", "REDIS_URI has no recognizable scheme (missing '://'), skipping credential injection");
+                env.redis_uri.clone()
+            }
+        }
+    };
+    let redis_client = redis::Client::open(redis_url).expect("invalid Redis URI");
+    let con: ConnectionManager = redis_client.get_connection_manager().await.expect("failed to connect to Redis");
 
     // 3. Init and connect to MQTT
     info!(target: "app", "Initializing MQTT...");
     let mqtt_config: MqttConfig = MqttConfig::new(&env);
-    match MqttClient::new(MqttOptions::new(&mqtt_config)) {
-        Ok(mut mqtt_client) => {
-            mqtt_client.connect().await;
-            if let Err(err) = mqtt_client.subscribe(TOPICS).await {
-                error!(target: "app", "MQTT cannot subscribe to TOPICS, err = {:?}", err);
-                panic!("unknown error, because MQTT cannot subscribe to TOPICS");
-            }
-            // 4. Wait for incoming MQTT messages
-            info!(target: "app", "Waiting for incoming MQTT messages");
-            while let Some(msg_opt) = mqtt_client.get_next_message().await {
-                let _ = process_mqtt_message(&msg_opt, &mut mqtt_client, &con).await;
-            }
-        }
-        Err(err) => {
-            error!(target: "app", "Error creating MQTT client: {:?}", err);
-            panic!("unknown error, cannot create MQTT client");
-        }
+    let mqtt_options = MqttOptions::new(&mqtt_config)?;
+    let mut mqtt_client = MqttClient::new(mqtt_options)?;
+    mqtt_client.connect().await;
+    mqtt_client.subscribe(TOPICS).await?;
+
+    // 4. Wait for incoming MQTT messages
+    info!(target: "app", "Waiting for incoming MQTT messages");
+    while let Some(msg_opt) = mqtt_client.get_next_message().await {
+        let _ = process_mqtt_message(&msg_opt, &mut mqtt_client, &con).await.inspect_err(|err| {
+            error!(target: "app", "process_mqtt_message - failed to process MQTT message: {:?}", err);
+        });
     }
+    Ok(())
 }
 
 async fn process_mqtt_message(
@@ -55,37 +71,20 @@ async fn process_mqtt_message(
 ) -> Result<(), anyhow::Error> {
     if let Some(msg) = msg_opt {
         debug!(target: "app", "process_mqtt_message - MQTT message received");
-        let msg_byte: Vec<u8> = get_bytes_from_payload(msg);
-        // return this if
-        if msg_byte.is_empty() {
-            // msg is not valid, because empty
-            debug!(target: "app", "process_mqtt_message - Empty msg_byte received");
-            Err(anyhow::Error::from(MessageError::EmptyMessageError))
-        } else {
-            match serde_json::from_str::<Notification<OnlineMqttPayload>>(get_string_payload(msg).as_str()) {
-                Ok(res) => {
-                    match insert_or_update_online(con, &res.api_token, &res.device_uuid, &res.feature_uuid).await {
-                        Ok(_) => Ok(()),
-                        Err(err) => {
-                            error!(target: "app", "process_mqtt_message - cannot insert/update online in db, err = {:?}", &err);
-                            Err(err)
-                        }
-                    }
-                }
-                Err(err) => {
-                    error!(target: "app", "process_mqtt_message - cannot parse message as Notification, err = {:?}", &err);
-                    // quickest way to return anyhow error from string as explained here https://docs.rs/anyhow/latest/anyhow/
-                    // it's equivalent to `return Err(anyhow!("message"))`
-                    Err(anyhow::Error::from(MessageError::ParseMessageError))
-                }
-            }
-        }
+        let payload_str = get_string_payload(msg)?;
+        let notification: Notification<OnlineMqttPayload> = serde_json::from_str(&payload_str)?;
+        insert_or_update_online(con, &notification.api_token, &notification.device_uuid, &notification.feature_uuid)
+            .await
+            .inspect_err(|err| {
+                error!(target: "app", "process_mqtt_message - cannot insert/update online in db, err = {:?}", err);
+            })?;
+        Ok(())
     } else {
         // msg_opt="None" means we were disconnected. Try to reconnect...
         warn!(target: "app", "process_mqtt_message - Lost connection. Attempting reconnect in 5 seconds...");
         while let Err(err) = mqtt_client.reconnect().await {
             error!(target: "app", "process_mqtt_message - Error reconnecting: {:?}, retrying in 5 seconds...", err);
-            tokio::time::sleep(Duration::from_millis(5000)).await;
+            tokio::time::sleep(Duration::from_secs(5)).await;
         }
         Ok(())
     }

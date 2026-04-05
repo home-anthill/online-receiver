@@ -9,4 +9,6 @@ pub enum RedisError {
     HSetError,
     #[error("HSet values result error")]
     HSetResultError,
+    #[error("Invalid UUID format error")]
+    InvalidUuidError,
 }
