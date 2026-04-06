@@ -29,16 +29,20 @@ Run a single test: `cargo test <test_name> -- --nocapture --test-threads 1`
 
 **Structure:** The service is split into a library (`src/lib.rs`) and binary (`src/main.rs`). The binary orchestrates initialization and the main loop; the library exports all logic for potential reuse.
 
-**Entry point:** `src/main.rs` — tokio async main that initializes config, connects to Redis (with optional authentication), sets up MQTT client, and runs the message processing loop.
+**Entry point:** `src/main.rs` — `#[rocket::main]` async entry point that initializes config, connects to Redis (with optional authentication), sets up MQTT client, spawns the MQTT event loop as a background `tokio::task::spawn` task, then launches a Rocket HTTP server for health checking.
 
 **Module structure:**
 - **config/** — `Env` struct deserialized from environment variables (with `#[serde(default)]` for optional fields like `redis_username` and `redis_password` to maintain backwards compatibility); logging setup (daily rolling files via tracing)
 - **mqtt/** — `MqttClient` (async paho-mqtt wrapper), `MqttOptions` (connection/TLS builder with proper error propagation), `MqttConfig`, `get_string_payload` / `get_bytes_from_payload` helpers; subscribes at QoS 0 with `clean_session(false)` (persistent session survives reconnects)
 - **db/** — `insert_or_update_online()` — Redis hash keyed as `online_{device_uuid}_feature_{feature_uuid}`; on first write sets `apiToken` + `createdAt` (Unix ms); on update sets `apiToken` + `modifiedAt` (Unix ms); all three UUIDs (`api_token`, `device_uuid`, `feature_uuid`) validated as UUIDv4 to prevent Redis key injection
 - **models/** — Two distinct envelope types: `Notification<T>` is the raw MQTT JSON (just `apiToken`, `deviceUuid`, `featureUuid`, `payload`); `Message<T>` is the internal form that additionally embeds the parsed `Topic`. `OnlineMqttPayload` is intentionally empty — the `payload` field in incoming JSON is always `{}`. `Topic` parses `online/{device_uuid}/features/{feature_uuid}` topic strings.
-- **errors/** — Custom error enums via `thiserror` (`MessageError` with `PayloadTooLargeError`, `RedisError` with `InvalidUuidError`, `MqttError` with `SslConfigError`)
+- **errors/** — Custom error enums via `thiserror` (`MessageError` with `PayloadTooLargeError`, `RedisError` with `InvalidUuidError`, `MqttError` with `SslConfigError`); `ApiResponse` / `ApiError` types (in `api_error.rs`) implement Rocket's `Responder` for JSON HTTP responses
+- **routes/** — `GET /keepalive` returns `{"alive": true}` with HTTP 200; used by Kubernetes liveness probes
+- **catchers/** — Rocket error catchers for HTTP 400, 404, 500, 503; log via `tracing::error!` and return `ApiError` JSON
 
 **Message flow:** MQTT message → size-check payload (64 KiB limit) → validate UTF-8 → parse JSON as `Notification<OnlineMqttPayload>` → validate all three UUIDs (v4) → insert/update Redis hash with timestamp (Unix ms) → reconnect on disconnection (5s retry).
+
+**HTTP server:** Rocket runs concurrently with the MQTT loop (port 8088 in debug, port 80 in release). Config lives in `Rocket.toml` (JSON body limit 8 KiB, `cli_colors = false` for plaintext logs). The `secret_key` in `Rocket.toml` is a placeholder — replace with a real key in production (`openssl rand -base64 32`).
 
 ## Code Style
 

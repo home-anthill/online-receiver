@@ -1,0 +1,20 @@
+[default]
+
+[debug]
+# secret_key = when compiled in debug mode, a fresh key is generated automatically.
+port = 8088
+limits = { json = "8 KiB" }
+# Disable CLI coloring in Rocket framework to ensure plaintext logs.
+cli_colors = false
+
+[release]
+address = "0.0.0.0"
+port = 80
+# required by rocket with '--release' to encrypt private cookies
+# check https://rocket.rs/v0.5/guide/configuration/#secret-key
+# generated via `openssl rand -base64 32`
+# this is only a placeholder, don't use it in production
+secret_key="PMff4Rb7uhvW4eyvfEX16SvciUjmeSqcFsFwtXx/e0M="
+limits = { json = "8 KiB" }
+# Disable CLI coloring in Rocket framework to ensure plaintext logs.
+cli_colors = false

@@ -1,5 +1,16 @@
 # Changelog (AI-assisted changes)
 
+## HTTP Health Endpoint
+
+**Rocket HTTP Server Added**
+Added a Rocket web server running concurrently with the MQTT event loop. The entry point was changed from `#[tokio::main]` to `#[rocket::main]`; the MQTT loop now runs as a background `tokio::task::spawn` task. Rocket serves a `GET /keepalive` health endpoint returning `{"alive": true}` (HTTP 200), used by Kubernetes liveness probes. Runs on port 8088 in debug mode and port 80 in release mode.
+
+**New Modules: routes/, catchers/, errors/api_error.rs**
+Added `routes/api.rs` with the `keep_alive` handler. Added `catchers/mod.rs` with Rocket error catchers for HTTP 400, 404, 500, and 503 — each logs via `tracing::error!` and returns an `ApiError` JSON response. Added `errors/api_error.rs` defining `ApiResponse` and `ApiError` structs, both implementing Rocket's `Responder` trait for JSON HTTP responses.
+
+**Rocket.toml Configuration**
+Added `Rocket.toml` to configure ports, JSON body limits (8 KiB), and `cli_colors = false` for plaintext logs. The `secret_key` in the release profile is a placeholder — must be replaced with a real key in production (`openssl rand -base64 32`).
+
 ## Security
 
 **TLS/SSL Certificate Handling Hardened**

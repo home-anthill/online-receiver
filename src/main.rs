@@ -2,21 +2,24 @@ use std::time::Duration;
 
 use paho_mqtt::Message;
 use redis::aio::ConnectionManager;
-use tracing::{debug, error, info, warn};
+use rocket::{self, catchers, routes};
+use tracing::{error, info, warn};
 
+use online::catchers as app_catchers;
 use online::config::{AppEnv, Env, init};
-use online::db::online::insert_or_update_online;
 use online::models::notification::Notification;
 use online::models::payload_trait::OnlineMqttPayload;
 use online::mqtt::get_string_payload;
 use online::mqtt::mqtt_client::MqttClient;
 use online::mqtt::mqtt_config::MqttConfig;
 use online::mqtt::mqtt_options::MqttOptions;
+use online::routes as app_routes;
 
 const TOPICS: &[&str] = &["online/+/features/+"];
 
-#[tokio::main]
-async fn main() -> Result<(), anyhow::Error> {
+#[rocket::main]
+#[allow(clippy::result_large_err)]
+async fn main() -> Result<(), rocket::Error> {
     // 1. Init logger and env
     let (env, _app_env): (Env, AppEnv) = init();
 
@@ -49,18 +52,38 @@ async fn main() -> Result<(), anyhow::Error> {
     // 3. Init and connect to MQTT
     info!(target: "app", "Initializing MQTT...");
     let mqtt_config: MqttConfig = MqttConfig::new(&env);
-    let mqtt_options = MqttOptions::new(&mqtt_config)?;
-    let mut mqtt_client = MqttClient::new(mqtt_options)?;
+    let mqtt_options = MqttOptions::new(&mqtt_config).expect("failed to build MQTT options");
+    let mut mqtt_client = MqttClient::new(mqtt_options).expect("failed to create MQTT client");
     mqtt_client.connect().await;
-    mqtt_client.subscribe(TOPICS).await?;
+    mqtt_client.subscribe(TOPICS).await.expect("failed to subscribe to MQTT topics");
 
-    // 4. Wait for incoming MQTT messages
-    info!(target: "app", "Waiting for incoming MQTT messages");
-    while let Some(msg_opt) = mqtt_client.get_next_message().await {
-        let _ = process_mqtt_message(&msg_opt, &mut mqtt_client, &con).await.inspect_err(|err| {
-            error!(target: "app", "process_mqtt_message - failed to process MQTT message: {:?}", err);
-        });
-    }
+    // 4. Spawn the MQTT event loop as a background task
+    let mqtt_handle = tokio::task::spawn(async move {
+        info!(target: "app", "Waiting for incoming MQTT messages");
+        while let Some(msg_opt) = mqtt_client.get_next_message().await {
+            let _ = process_mqtt_message(&msg_opt, &mut mqtt_client, &con).await.inspect_err(|err| {
+                error!(target: "app", "process_mqtt_message - failed to process MQTT message: {:?}", err);
+            });
+        }
+    });
+
+    // 5. Launch Rocket for the health endpoint
+    info!(target: "app", "Starting Rocket...");
+    let _rocket = rocket::build()
+        .mount("/", routes![app_routes::api::keep_alive])
+        .register(
+            "/",
+            catchers![
+                app_catchers::bad_request,
+                app_catchers::not_found,
+                app_catchers::internal_server_error,
+                app_catchers::service_unavailable,
+            ],
+        )
+        .launch()
+        .await?;
+
+    mqtt_handle.abort();
     Ok(())
 }
 
@@ -70,10 +93,10 @@ async fn process_mqtt_message(
     con: &ConnectionManager,
 ) -> Result<(), anyhow::Error> {
     if let Some(msg) = msg_opt {
-        debug!(target: "app", "process_mqtt_message - MQTT message received");
+        use online::db::online::insert_or_update_online as db_update;
         let payload_str = get_string_payload(msg)?;
         let notification: Notification<OnlineMqttPayload> = serde_json::from_str(&payload_str)?;
-        insert_or_update_online(con, &notification.api_token, &notification.device_uuid, &notification.feature_uuid)
+        db_update(con, &notification.api_token, &notification.device_uuid, &notification.feature_uuid)
             .await
             .inspect_err(|err| {
                 error!(target: "app", "process_mqtt_message - cannot insert/update online in db, err = {:?}", err);
