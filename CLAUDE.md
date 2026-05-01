@@ -93,5 +93,5 @@ docker build -t ks89/online-receiver:latest .
 See `.env_template` for all required variables. Key settings:
 
 - **Redis**: `REDIS_URI` (connection string), `REDIS_USERNAME` (optional, defaults to empty), `REDIS_PASSWORD` (optional). If both are set, credentials are injected into the URI before connecting (e.g., `redis://host:port` becomes `redis://user:pass@host:port`). If username is set but password is empty, a warning is logged and no authentication is attempted.
-- **MQTT**: `MQTT_URL`, `MQTT_PORT`, `MQTT_AUTH`, `MQTT_USER`, `MQTT_PASSWORD`, `MQTT_TLS`, `ROOT_CA`, `MQTT_CERT_FILE`, `MQTT_KEY_FILE`
+- **MQTT**: `MQTT_URL`, `MQTT_PORT`, `MQTT_CLIENT_ID`, `MQTT_AUTH`, `MQTT_USER`, `MQTT_PASSWORD`, `MQTT_TLS`, `ROOT_CA`, `MQTT_CERT_FILE`, `MQTT_KEY_FILE`. The sample `.env_template` uses a dedicated subscriber account (`online_receiver_sub`) for this service.
 - **Logging**: `LOG_LEVEL` controls tracing filter (debug, info, warn, error)

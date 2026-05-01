@@ -55,3 +55,4 @@ Added `redis_username` and `redis_password` fields to `Env` struct, both optiona
 
 **Environment Template Updated**
 `.env_template` now includes `REDIS_USERNAME=redisuser` and `REDIS_PASSWORD=Password1!` entries, matching the named ACL user created by the local Docker Redis command.
+Updated the MQTT sample credentials from the generic Mosquitto example account to a service-specific subscriber account: `MQTT_USER=online_receiver_sub` and `MQTT_PASSWORD=OnlineReceiverPassword1!`. This keeps local examples aligned with the intended per-service MQTT principal.
