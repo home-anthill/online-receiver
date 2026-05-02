@@ -8,3 +8,5 @@ pub struct OnlineMqttPayload {
 pub trait PayloadTrait {}
 
 impl PayloadTrait for OnlineMqttPayload {}
+
+impl PayloadTrait for serde_json::Value {}

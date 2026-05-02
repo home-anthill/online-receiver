@@ -33,6 +33,7 @@ impl AppEnv {
 #[derive(Deserialize)]
 pub struct Env {
     pub log_level: Option<String>,
+    pub mongodb_url: String,
     pub redis_uri: String,
     pub redis_username: String,
     pub redis_password: String,
@@ -52,6 +53,7 @@ impl fmt::Debug for Env {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Env")
             .field("log_level", &self.log_level)
+            .field("mongodb_url = {}", &"[REDACTED]")
             .field("redis_uri = {}", &redact_redis_uri(&self.redis_uri))
             .field("redis_username = {}", &self.redis_username)
             .field("redis_password = {}", &"***")
@@ -133,6 +135,7 @@ pub fn init() -> (Env, AppEnv) {
 
 fn print_env(env: &Env) {
     info!(target: "app", "log_level = {}", env.log_level.as_deref().unwrap_or("debug"));
+    info!(target: "app", "mongodb_url = [REDACTED]");
     info!(target: "app", "redis_uri = {}", redact_redis_uri(&env.redis_uri));
     info!(target: "app", "redis_username = {}", env.redis_username);
     info!(target: "app", "redis_password = {}", !env.redis_password.is_empty());

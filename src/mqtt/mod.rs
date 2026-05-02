@@ -49,11 +49,13 @@ mod tests {
     use serde_json::json;
     use std::str::from_utf8;
 
-    fn get_expected_json_string(api_token: &str, device_uuid: &str, feature_uuid: &str, topic: &Topic) -> String {
+    fn get_expected_json_string(device_uuid: &str, feature_uuid: &str, topic: &Topic) -> String {
         json!({
-            "apiToken": api_token,
             "deviceUuid": device_uuid,
             "featureUuid": feature_uuid,
+            "timestamp": 1777630000i64,
+            "nonce": "00112233445566778899aabbccddeeff",
+            "signature": "aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899",
             "topic": {
                 "family": topic.family,
                 "deviceUuid": topic.device_uuid,
@@ -73,14 +75,12 @@ mod tests {
         // create a paho_mqtt::Message
         let device_uuid = "246e3256-f0dd-4fcb-82c5-ee20c2267eeb";
         let feature_uuid = "6ba7ed96-a041-44a5-8b90-98e66eacfeee";
-        let api_token = "473a4861-632b-4915-b01e-cf1d418966c6";
         let topic = Topic::new(&format!("online/{}/features/{}", device_uuid, feature_uuid)).unwrap();
-        let msg_payload = r#"{"apiToken":""#.to_owned()
-            + api_token
-            + r#"", "deviceUuid":""#
+        let msg_payload = r#"{"deviceUuid":""#.to_owned()
             + device_uuid
             + r#"", "featureUuid":""#
             + feature_uuid
+            + r#"", "timestamp":1777630000, "nonce":"00112233445566778899aabbccddeeff", "signature":"aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899"#
             + r#"","payload":{}}"#;
         let msg_byte_arr: Vec<u8> = get_msg_byte(&topic, msg_payload.as_str()).unwrap();
         let message = Message::new(format!("online/{}/features/{}", device_uuid, feature_uuid), msg_byte_arr, 0);
@@ -90,7 +90,7 @@ mod tests {
 
         // check result
         let result = from_utf8(bytes.as_slice()).unwrap();
-        let expected_value = get_expected_json_string(api_token, device_uuid, feature_uuid, &topic);
+        let expected_value = get_expected_json_string(device_uuid, feature_uuid, &topic);
         assert_eq!(result.to_string(), expected_value);
     }
 }

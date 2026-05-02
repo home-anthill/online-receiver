@@ -24,9 +24,11 @@ where
     let val = serde_json::from_str::<Notification<T>>(payload_str)?;
     debug!(target: "app", "message_payload_to_bytes - parsed from JSON string, returning as byte array");
     let serialized = Message::<T>::new_as_json(
-        val.api_token.clone(),
         val.device_uuid.clone(),
         val.feature_uuid.clone(),
+        val.timestamp,
+        val.nonce.clone(),
+        val.signature.clone(),
         topic.clone(),
         val.payload,
     )?;
