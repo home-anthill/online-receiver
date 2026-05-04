@@ -7,6 +7,8 @@ use uuid::Uuid;
 
 use crate::errors::redis_error::RedisError;
 
+const FCM_BY_API_TOKEN_KEY: &str = "fcm_by_api_token";
+
 fn is_valid_uuid_v4(s: &str) -> bool {
     Uuid::parse_str(s).map(|u| u.get_version_num() == 4).unwrap_or(false)
 }
@@ -40,13 +42,22 @@ pub async fn insert_or_update_online(
     let field_to_set = if is_exists { "modifiedAt" } else { "createdAt" };
 
     let timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis().to_string();
-    let (): () = con
-        .hset_multiple(&db_key, &[("apiToken", api_token), (field_to_set, timestamp.as_str())])
-        .await
-        .map_err(|e| {
-            error!(target: "app", "insert_or_update_online - Redis hset error: {:?}", e);
-            RedisError::HSetError
-        })?;
+    let fcm_token: Option<String> = match con.hget(FCM_BY_API_TOKEN_KEY, api_token).await {
+        Ok(val) => val,
+        Err(e) => {
+            error!(target: "app", "insert_or_update_online - Redis hget fcmToken error: {:?}", e);
+            None
+        }
+    };
+    let mut fields = vec![("apiToken", api_token), (field_to_set, timestamp.as_str())];
+    if let Some(fcm_token) = fcm_token.as_deref() {
+        fields.push(("fcmToken", fcm_token));
+    }
+
+    let (): () = con.hset_multiple(&db_key, &fields).await.map_err(|e| {
+        error!(target: "app", "insert_or_update_online - Redis hset error: {:?}", e);
+        RedisError::HSetError
+    })?;
     debug!(target: "app", "insert_or_update_online - hset completed");
     Ok(())
 }
