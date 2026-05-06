@@ -18,7 +18,6 @@ fn notification_with_nonce(device_uuid: &str, feature_uuid: &str, nonce: &str) -
     }
 }
 
-
 // Replaying a valid signed payload would repeat the original side effect even though the
 // HMAC is still valid (attackers can use this for their purposes),
 // so this verifies Redis rejects the same signed nonce after first use.

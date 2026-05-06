@@ -54,33 +54,20 @@ impl fmt::Debug for Env {
         f.debug_struct("Env")
             .field("log_level", &self.log_level)
             .field("mongodb_url = {}", &"[REDACTED]")
-            .field("redis_uri = {}", &redact_redis_uri(&self.redis_uri))
+            .field("redis_uri = {}", &"[REDACTED]")
             .field("redis_username = {}", &self.redis_username)
-            .field("redis_password = {}", &"***")
+            .field("redis_password = {}", &"[REDACTED]")
             .field("mqtt_url = {}", &self.mqtt_url)
             .field("mqtt_port = {}", &self.mqtt_port)
             .field("mqtt_client_id = {}", &self.mqtt_client_id)
             .field("mqtt_auth = {}", &self.mqtt_auth)
-            .field("mqtt_user = {}", &"***")
+            .field("mqtt_user = {}", &"[REDACTED]")
             .field("mqtt_tls = {}", &self.mqtt_tls)
             .field("root_ca = {}", &self.root_ca)
             .field("mqtt_cert_file = {}", &self.mqtt_cert_file)
             .field("mqtt_key_file = {}", &self.mqtt_key_file)
             .finish()
     }
-}
-
-/// Returns the Redis URI with any embedded password replaced by `***`.
-/// e.g. `redis://:secret@host:6379` → `redis://:***@host:6379`
-pub fn redact_redis_uri(uri: &str) -> String {
-    if let Some(at_pos) = uri.rfind('@')
-        && let Some(scheme_end) = uri.find("://")
-    {
-        let scheme_and_authority = &uri[..scheme_end + 3];
-        let host_and_rest = &uri[at_pos..];
-        return format!("{scheme_and_authority}***{host_and_rest}");
-    }
-    uri.to_string()
 }
 
 pub fn init() -> (Env, AppEnv) {
@@ -136,7 +123,7 @@ pub fn init() -> (Env, AppEnv) {
 fn print_env(env: &Env) {
     info!(target: "app", "log_level = {}", env.log_level.as_deref().unwrap_or("debug"));
     info!(target: "app", "mongodb_url = [REDACTED]");
-    info!(target: "app", "redis_uri = {}", redact_redis_uri(&env.redis_uri));
+    info!(target: "app", "redis_uri = [REDACTED]");
     info!(target: "app", "redis_username = {}", env.redis_username);
     info!(target: "app", "redis_password = {}", !env.redis_password.is_empty());
     info!(target: "app", "mqtt_url = {}", env.mqtt_url);
@@ -144,6 +131,7 @@ fn print_env(env: &Env) {
     info!(target: "app", "mqtt_client_id = {}", env.mqtt_client_id);
     info!(target: "app", "mqtt_auth = {}", env.mqtt_auth);
     info!(target: "app", "mqtt_user = [REDACTED]");
+    info!(target: "app", "mqtt_password = [REDACTED]");
     info!(target: "app", "mqtt_tls = {}", env.mqtt_tls);
     info!(target: "app", "root_ca = {}", env.root_ca);
     info!(target: "app", "mqtt_cert_file = {}", env.mqtt_cert_file);
