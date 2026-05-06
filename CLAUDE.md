@@ -40,7 +40,7 @@ Run a single test: `cargo test <test_name> -- --nocapture --test-threads 1`
 - **routes/** — `GET /keepalive` returns `{"alive": true}` with HTTP 200; used by Kubernetes liveness probes
 - **catchers/** — Rocket error catchers for HTTP 400, 404, 500, 503; log via `tracing::error!` and return `ApiError` JSON
 
-**Message flow:** MQTT message → size-check payload (64 KiB limit) → validate UTF-8 → parse JSON as `Notification<OnlineMqttPayload>` → validate all three UUIDs (v4) → insert/update Redis hash with timestamp (Unix ms) → reconnect on disconnection (5s retry).
+**Message flow:** MQTT message → size-check payload (64 KiB limit) → validate UTF-8 → parse JSON as `Notification<OnlineMqttPayload>` → validate topic/payload match → verify signed MQTT HMAC → claim signed nonce in Redis → insert/update Redis hash with timestamp (Unix ms) → reconnect on disconnection (5s retry).
 
 **HTTP server:** Rocket runs concurrently with the MQTT loop (port 8088 in debug, port 80 in release). Config lives in `Rocket.toml` (JSON body limit 8 KiB, `cli_colors = false` for plaintext logs). The `secret_key` in `Rocket.toml` is a placeholder — replace with a real key in production (`openssl rand -base64 32`).
 
@@ -63,6 +63,7 @@ Run a single test: `cargo test <test_name> -- --nocapture --test-threads 1`
 - MQTT payload size is capped at 64 KiB (`MAX_PAYLOAD_BYTES`) before JSON deserialization to prevent excessive memory allocation
 - MQTT credentials are never logged — username logged as `[REDACTED]`, password not logged at all
 - Redis credentials are never logged (though their presence in the constructed URI is noted in logs)
+- Signed MQTT replay protection uses Redis `SET signed-replay:v1:{device_uuid}:{feature_uuid}:{nonce} 1 NX EX 720` after HMAC verification and before online-state updates.
 - LWT (Last Will and Testament) message is published to `online/lwt` (service-scoped topic) rather than a generic topic
 - SSL/TLS errors are propagated with context (via `SslConfigError` variant) — no `.unwrap()` on certificate operations
 - Combined CA file is written atomically using `OpenOptions::truncate(true)` to prevent TOCTOU race conditions

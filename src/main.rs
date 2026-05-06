@@ -20,6 +20,7 @@ use online::routes as app_routes;
 
 const TOPICS: &[&str] = &["online/+/features/+"];
 const SIGNED_MESSAGE_MAX_SKEW_SECS: i64 = 300;
+const SIGNED_REPLAY_CACHE_TTL_SECS: usize = 720;
 
 type HmacSha256 = Hmac<Sha256>;
 
@@ -51,6 +52,31 @@ fn verify_mqtt_signature(api_token: &str, notification: &Notification<Value>) ->
     let signed_payload = build_signed_mqtt_payload(notification)?;
     if !verify_hmac(api_token, signed_payload.as_bytes(), &notification.signature) {
         anyhow::bail!("invalid signed MQTT payload");
+    }
+    Ok(())
+}
+
+fn signed_replay_key(device_uuid: &str, feature_uuid: &str, nonce: &str) -> String {
+    format!("signed-replay:v1:{device_uuid}:{feature_uuid}:{nonce}")
+}
+
+async fn claim_signed_nonce(con: &ConnectionManager, notification: &Notification<Value>) -> Result<(), anyhow::Error> {
+    let mut con = con.clone();
+    let key = signed_replay_key(&notification.device_uuid, &notification.feature_uuid, &notification.nonce);
+    let result: Option<String> = redis::cmd("SET")
+        .arg(key)
+        .arg("1")
+        .arg("NX")
+        .arg("EX")
+        .arg(SIGNED_REPLAY_CACHE_TTL_SECS)
+        .query_async(&mut con)
+        .await?;
+    ensure_signed_nonce_claimed(result)
+}
+
+fn ensure_signed_nonce_claimed(result: Option<String>) -> Result<(), anyhow::Error> {
+    if result.is_none() {
+        anyhow::bail!("replayed signed nonce detected");
     }
     Ok(())
 }
@@ -146,6 +172,7 @@ async fn process_mqtt_message(
                 .await?
                 .ok_or_else(|| anyhow::anyhow!("registered online sensor not found"))?;
         verify_mqtt_signature(&api_token, &notification)?;
+        claim_signed_nonce(con, &notification).await?;
         db_update(con, &api_token, &notification.device_uuid, &notification.feature_uuid).await.inspect_err(|err| {
             error!(target: "app", "process_mqtt_message - cannot insert/update online in db, err = {:?}", err);
         })?;
@@ -160,3 +187,19 @@ async fn process_mqtt_message(
         Ok(())
     }
 }
+
+#[test]
+fn signed_replay_key_scopes_nonce_by_device_and_feature() {
+    let key = signed_replay_key("device-a", "feature-b", "nonce-c");
+    assert_eq!(key, "signed-replay:v1:device-a:feature-b:nonce-c");
+}
+
+#[test]
+fn signed_nonce_claim_result_rejects_existing_key() {
+    assert!(ensure_signed_nonce_claimed(Some("OK".to_string())).is_ok());
+    let err = ensure_signed_nonce_claimed(None).expect_err("duplicate nonce must be rejected");
+    assert_eq!(err.to_string(), "replayed signed nonce detected");
+}
+
+#[cfg(test)]
+mod tests_integration;
