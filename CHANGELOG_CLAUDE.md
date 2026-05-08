@@ -1,5 +1,12 @@
 # Changelog (AI-assisted changes)
 
+## Redis Online State
+
+**`modifiedAt` always set**
+`insert_or_update_online()` now writes `modifiedAt` on initial Redis hash creation as well as on updates.
+For new keys, `createdAt` and `modifiedAt` are intentionally equal so readers can rely on both fields
+being present without special-casing first-seen devices.
+
 ## HTTP Health Endpoint
 
 **Rocket HTTP Server Added**

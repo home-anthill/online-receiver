@@ -39,8 +39,6 @@ pub async fn insert_or_update_online(
         error!(target: "app", "insert_or_update_online - Redis exists error: {:?}", e);
         RedisError::IsExistsError
     })?;
-    let field_to_set = if is_exists { "modifiedAt" } else { "createdAt" };
-
     let timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis().to_string();
     let fcm_token: Option<String> = match con.hget(FCM_BY_API_TOKEN_KEY, api_token).await {
         Ok(val) => val,
@@ -49,7 +47,10 @@ pub async fn insert_or_update_online(
             None
         }
     };
-    let mut fields = vec![("apiToken", api_token), (field_to_set, timestamp.as_str())];
+    let mut fields = vec![("apiToken", api_token), ("modifiedAt", timestamp.as_str())];
+    if !is_exists {
+        fields.push(("createdAt", timestamp.as_str()));
+    }
     if let Some(fcm_token) = fcm_token.as_deref() {
         fields.push(("fcmToken", fcm_token));
     }

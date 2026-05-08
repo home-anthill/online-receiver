@@ -1,3 +1,4 @@
+use dotenvy::dotenv;
 use redis::AsyncCommands;
 use redis::aio::ConnectionManager;
 use serde_json::{Value, json};
@@ -23,7 +24,8 @@ fn notification_with_nonce(device_uuid: &str, feature_uuid: &str, nonce: &str) -
 // so this verifies Redis rejects the same signed nonce after first use.
 #[tokio::test]
 async fn claim_signed_nonce_rejects_duplicate_with_real_redis() {
-    let redis_url = std::env::var("REDIS_URI").unwrap_or_else(|_| "redis://localhost:6379".to_string());
+    dotenv().ok();
+    let redis_url = std::env::var("REDIS_URI").unwrap();
     let redis_client = redis::Client::open(redis_url).expect("valid Redis URL");
     let con: ConnectionManager = redis_client.get_connection_manager().await.expect("Redis connection");
 

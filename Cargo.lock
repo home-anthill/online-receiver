@@ -1414,7 +1414,9 @@ dependencies = [
 name = "ks89-online-receiver"
 version = "3.0.0"
 dependencies = [
+ "aes-gcm",
  "anyhow",
+ "base64",
  "dotenvy",
  "envy",
  "futures",

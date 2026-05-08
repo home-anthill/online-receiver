@@ -34,7 +34,7 @@ Run a single test: `cargo test <test_name> -- --nocapture --test-threads 1`
 **Module structure:**
 - **config/** — `Env` struct deserialized from environment variables (with `#[serde(default)]` for optional fields like `redis_username` and `redis_password` to maintain backwards compatibility); logging setup (daily rolling files via tracing)
 - **mqtt/** — `MqttClient` (async paho-mqtt wrapper), `MqttOptions` (connection/TLS builder with proper error propagation), `MqttConfig`, `get_string_payload` / `get_bytes_from_payload` helpers; subscribes at QoS 0 with `clean_session(false)` (persistent session survives reconnects)
-- **db/** — `insert_or_update_online()` — Redis hash keyed as `online_{device_uuid}_feature_{feature_uuid}`; on first write sets `apiToken` + `createdAt` (Unix ms); on update sets `apiToken` + `modifiedAt` (Unix ms); all three UUIDs (`api_token`, `device_uuid`, `feature_uuid`) validated as UUIDv4 to prevent Redis key injection
+- **db/** — `insert_or_update_online()` — Redis hash keyed as `online_{device_uuid}_feature_{feature_uuid}`; on first write sets `apiToken`, `createdAt`, and `modifiedAt` (Unix ms) with equal timestamps; on update preserves `createdAt` and sets `apiToken` + `modifiedAt`; all three UUIDs (`api_token`, `device_uuid`, `feature_uuid`) validated as UUIDv4 to prevent Redis key injection
 - **models/** — Two distinct envelope types: `Notification<T>` is the raw MQTT JSON (just `apiToken`, `deviceUuid`, `featureUuid`, `payload`); `Message<T>` is the internal form that additionally embeds the parsed `Topic`. `OnlineMqttPayload` is intentionally empty — the `payload` field in incoming JSON is always `{}`. `Topic` parses `online/{device_uuid}/features/{feature_uuid}` topic strings.
 - **errors/** — Custom error enums via `thiserror` (`MessageError` with `PayloadTooLargeError`, `RedisError` with `InvalidUuidError`, `MqttError` with `SslConfigError`); `ApiResponse` / `ApiError` types (in `api_error.rs`) implement Rocket's `Responder` for JSON HTTP responses
 - **routes/** — `GET /keepalive` returns `{"alive": true}` with HTTP 200; used by Kubernetes liveness probes
@@ -70,7 +70,7 @@ Run a single test: `cargo test <test_name> -- --nocapture --test-threads 1`
 
 ## Testing
 
-- Tests are inline `#[cfg(test)]` modules (no separate `tests/` directory)
+- Tests are split into `src/tests_integration/` modules and run through the crate test harness
 - Tests require Redis and Mosquitto (MQTT broker) running locally
 - CI uses `ENV=testing` to skip file-based logging
 - Test Redis keys use `test_` prefix (via `from_uuid_to_db_key` which checks `ENV`)
