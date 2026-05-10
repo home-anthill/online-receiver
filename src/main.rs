@@ -39,7 +39,7 @@ fn verify_hmac(secret: &str, message: &[u8], expected_hex: &str) -> bool {
 fn build_signed_mqtt_payload(notification: &Notification<Value>) -> Result<String, anyhow::Error> {
     let payload_json = serde_json::to_string(&notification.payload)?;
     Ok(format!(
-        "{}\n{}\n{}\n{}\n{}",
+        "{}\n{}\nonline\n{}\n{}\n{}",
         notification.device_uuid, notification.feature_uuid, notification.timestamp, notification.nonce, payload_json
     ))
 }
@@ -79,6 +79,13 @@ fn ensure_signed_nonce_claimed(result: Option<String>) -> Result<(), anyhow::Err
         anyhow::bail!("replayed signed nonce detected");
     }
     Ok(())
+}
+
+fn notification_summary_log(notification: &Notification<Value>) -> String {
+    format!(
+        "device_uuid={}, feature_uuid={}, payload={}",
+        notification.device_uuid, notification.feature_uuid, notification.payload
+    )
 }
 
 #[rocket::main]
@@ -128,7 +135,8 @@ async fn main() -> Result<(), rocket::Error> {
         info!(target: "app", "Waiting for incoming MQTT messages");
         while let Some(msg_opt) = mqtt_client.get_next_message().await {
             let _ = process_mqtt_message(&msg_opt, &mut mqtt_client, &con, &mongo_db).await.inspect_err(|err| {
-                error!(target: "app", "process_mqtt_message - failed to process MQTT message: {:?}", err);
+                let topic = msg_opt.as_ref().map(|msg| msg.topic()).unwrap_or("[disconnected]");
+                error!(target: "app", "process_mqtt_message - failed to process MQTT message topic={}, err={:?}", topic, err);
             });
         }
     });
@@ -161,9 +169,21 @@ async fn process_mqtt_message(
 ) -> Result<(), anyhow::Error> {
     if let Some(msg) = msg_opt {
         use online::db::online::insert_or_update_online as db_update;
+        info!(
+            target: "app",
+            "process_mqtt_message - received MQTT message topic={}, payload_bytes={}",
+            msg.topic(),
+            msg.payload().len()
+        );
         let payload_str = get_string_payload(msg)?;
         let notification: Notification<Value> = serde_json::from_str(&payload_str)?;
         let topic = online::models::topic::Topic::new(msg.topic())?;
+        info!(
+            target: "app",
+            "process_mqtt_message - parsed MQTT message topic={}, notification={}",
+            topic,
+            notification_summary_log(&notification)
+        );
         if topic.device_uuid != notification.device_uuid || topic.feature_uuid != notification.feature_uuid {
             anyhow::bail!("topic does not match signed payload");
         }
@@ -176,6 +196,13 @@ async fn process_mqtt_message(
         db_update(con, &api_token, &notification.device_uuid, &notification.feature_uuid).await.inspect_err(|err| {
             error!(target: "app", "process_mqtt_message - cannot insert/update online in db, err = {:?}", err);
         })?;
+        info!(
+            target: "app",
+            "process_mqtt_message - processed MQTT message topic={}, device_uuid={}, feature_uuid={}",
+            topic,
+            notification.device_uuid,
+            notification.feature_uuid
+        );
         Ok(())
     } else {
         // msg_opt="None" means we were disconnected. Try to reconnect...
@@ -199,6 +226,48 @@ fn signed_nonce_claim_result_rejects_existing_key() {
     assert!(ensure_signed_nonce_claimed(Some("OK".to_string())).is_ok());
     let err = ensure_signed_nonce_claimed(None).expect_err("duplicate nonce must be rejected");
     assert_eq!(err.to_string(), "replayed signed nonce detected");
+}
+
+#[test]
+fn signed_payload_binds_online_feature_class() {
+    let notification = Notification {
+        device_uuid: "246e3256-f0dd-4fcb-82c5-ee20c2267eeb".to_string(),
+        feature_uuid: "41cb3f47-894c-45e9-90d9-a4d4de903896".to_string(),
+        timestamp: 1_777_630_000,
+        nonce: "nonce-1".to_string(),
+        signature: "00".repeat(32),
+        payload: serde_json::json!({}),
+    };
+
+    let signed_payload = build_signed_mqtt_payload(&notification).expect("signed payload");
+
+    assert_eq!(
+        signed_payload,
+        "246e3256-f0dd-4fcb-82c5-ee20c2267eeb\n41cb3f47-894c-45e9-90d9-a4d4de903896\nonline\n1777630000\nnonce-1\n{}"
+    );
+}
+
+#[test]
+fn notification_log_omits_protected_fields() {
+    let notification = Notification {
+        device_uuid: "246e3256-f0dd-4fcb-82c5-ee20c2267eeb".to_string(),
+        feature_uuid: "41cb3f47-894c-45e9-90d9-a4d4de903896".to_string(),
+        timestamp: 1_777_630_000,
+        nonce: "secret-nonce".to_string(),
+        signature: "secret-signature".to_string(),
+        payload: serde_json::json!({}),
+    };
+
+    let log_line = notification_summary_log(&notification);
+
+    assert!(log_line.contains("device_uuid=246e3256-f0dd-4fcb-82c5-ee20c2267eeb"));
+    assert!(log_line.contains("feature_uuid=41cb3f47-894c-45e9-90d9-a4d4de903896"));
+    assert!(log_line.contains("payload={}"));
+    assert!(!log_line.contains("timestamp"));
+    assert!(!log_line.contains("nonce"));
+    assert!(!log_line.contains("signature"));
+    assert!(!log_line.contains("secret-nonce"));
+    assert!(!log_line.contains("secret-signature"));
 }
 
 #[cfg(test)]

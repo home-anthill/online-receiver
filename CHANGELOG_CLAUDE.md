@@ -7,6 +7,14 @@
 For new keys, `createdAt` and `modifiedAt` are intentionally equal so readers can rely on both fields
 being present without special-casing first-seen devices.
 
+## Observability
+
+**Redacted MQTT processing logs**
+The MQTT loop now logs received, parsed, and successfully processed online messages at `INFO` using `target: "app"`, so they appear on stdout in development and production. The log output includes topic, device UUID, feature UUID, payload size, and payload. Signed timestamp, nonce, and signature are omitted from message metadata logs. Processing failures include the MQTT topic when available.
+
+**Clean MQTT subscriber session**
+The online receiver now connects with `clean_session(true)`. Online heartbeat messages are ephemeral, so persistent broker subscriptions are unnecessary and can cause duplicate deliveries after repeated restarts with the same client ID. Raw signed MQTT payloads are no longer logged at `DEBUG`; only payload size is logged before parsing.
+
 ## HTTP Health Endpoint
 
 **Rocket HTTP Server Added**
@@ -19,6 +27,9 @@ Added `routes/api.rs` with the `keep_alive` handler. Added `catchers/mod.rs` wit
 Added `Rocket.toml` to configure ports, JSON body limits (8 KiB), and `cli_colors = false` for plaintext logs. The `secret_key` in the release profile is a placeholder — must be replaced with a real key in production (`openssl rand -base64 32`).
 
 ## Security
+
+**Online signed payload binds feature class**
+Online heartbeat signatures now include the literal `online` feature name in the canonical HMAC input (`deviceUuid\nfeatureUuid\nonline\ntimestamp\nnonce\npayloadJson`). This keeps the shared firmware telemetry signing format aligned with the consumer's feature-bound sensor telemetry protocol.
 
 **TLS/SSL Certificate Handling Hardened**
 Replaced three `.unwrap()` calls on `SslOptionsBuilder::trust_store`, `key_store`, and `private_key` with proper error propagation via `MqttError::SslConfigError`. Added `SslConfigError(String)` variant to `MqttError`. Malformed certificate input now returns an error instead of crashing the service.

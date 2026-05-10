@@ -78,9 +78,9 @@ impl MqttOptions {
         let mut new_con_builder = ConnectOptionsBuilder::new();
         let connect_options_builder = new_con_builder
             .keep_alive_interval(Duration::from_secs(20))
-            // Using a "persistent" (non-clean) session
-            // so the broker keeps subscriptions and messages through reconnects
-            .clean_session(false)
+            // Online heartbeats are ephemeral. Start with a clean session so
+            // the broker does not retain stale subscriptions across restarts.
+            .clean_session(true)
             .will_message(lwt);
 
         if mqtt_auth {

@@ -28,7 +28,7 @@ pub fn get_string_payload(msg: &Message) -> Result<String, anyhow::Error> {
     }
     match std::str::from_utf8(msg.payload()) {
         Ok(res) => {
-            debug!(target: "app", "get_string_payload - MQTT utf8 payload_str: {}", res);
+            debug!(target: "app", "get_string_payload - MQTT utf8 payload accepted, payload_bytes={}", msg.payload().len());
             Ok(res.to_string())
         }
         Err(err) => {
