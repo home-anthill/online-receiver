@@ -28,6 +28,9 @@ Added `Rocket.toml` to configure ports, JSON body limits (8 KiB), and `cli_color
 
 ## Security
 
+**Signed envelope validation tightened**
+Online MQTT notifications must carry a 32-character lowercase-hex nonce and 64-character lowercase-hex signature before HMAC verification and Redis replay-cache keying.
+
 **Online signed payload binds feature class**
 Online heartbeat signatures now include the literal `online` feature name in the canonical HMAC input (`deviceUuid\nfeatureUuid\nonline\ntimestamp\nnonce\npayloadJson`). This keeps the shared firmware telemetry signing format aligned with the consumer's feature-bound sensor telemetry protocol.
 

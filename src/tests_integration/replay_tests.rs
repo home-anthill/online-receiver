@@ -31,7 +31,7 @@ async fn claim_signed_nonce_rejects_duplicate_with_real_redis() {
 
     let device_uuid = Uuid::new_v4().to_string();
     let feature_uuid = Uuid::new_v4().to_string();
-    let nonce = Uuid::new_v4().to_string();
+    let nonce = Uuid::new_v4().simple().to_string();
     let notification = notification_with_nonce(&device_uuid, &feature_uuid, &nonce);
     let key = signed_replay_key(&device_uuid, &feature_uuid, &nonce);
 

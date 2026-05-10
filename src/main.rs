@@ -21,8 +21,27 @@ use online::routes as app_routes;
 const TOPICS: &[&str] = &["online/+/features/+"];
 const SIGNED_MESSAGE_MAX_SKEW_SECS: i64 = 300;
 const SIGNED_REPLAY_CACHE_TTL_SECS: usize = 720;
+const SIGNED_NONCE_HEX_LEN: usize = 32;
+const SIGNED_SIGNATURE_HEX_LEN: usize = 64;
 
 type HmacSha256 = Hmac<Sha256>;
+
+fn is_lower_hex(value: &str, expected_len: usize) -> bool {
+    value.len() == expected_len && value.bytes().all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
+fn validate_signed_envelope(notification: &Notification<Value>) -> Result<(), anyhow::Error> {
+    if notification.timestamp <= 0 {
+        anyhow::bail!("timestamp must be positive");
+    }
+    if !is_lower_hex(&notification.nonce, SIGNED_NONCE_HEX_LEN) {
+        anyhow::bail!("nonce must be 32 lowercase hex characters");
+    }
+    if !is_lower_hex(&notification.signature, SIGNED_SIGNATURE_HEX_LEN) {
+        anyhow::bail!("signature must be 64 lowercase hex characters");
+    }
+    Ok(())
+}
 
 fn verify_hmac(secret: &str, message: &[u8], expected_hex: &str) -> bool {
     let mut mac = HmacSha256::new_from_slice(secret.as_bytes()).expect("HMAC accepts any key length");
@@ -177,6 +196,7 @@ async fn process_mqtt_message(
         );
         let payload_str = get_string_payload(msg)?;
         let notification: Notification<Value> = serde_json::from_str(&payload_str)?;
+        validate_signed_envelope(&notification)?;
         let topic = online::models::topic::Topic::new(msg.topic())?;
         info!(
             target: "app",
@@ -234,7 +254,7 @@ fn signed_payload_binds_online_feature_class() {
         device_uuid: "246e3256-f0dd-4fcb-82c5-ee20c2267eeb".to_string(),
         feature_uuid: "41cb3f47-894c-45e9-90d9-a4d4de903896".to_string(),
         timestamp: 1_777_630_000,
-        nonce: "nonce-1".to_string(),
+        nonce: "00112233445566778899aabbccddeeff".to_string(),
         signature: "00".repeat(32),
         payload: serde_json::json!({}),
     };
@@ -243,7 +263,7 @@ fn signed_payload_binds_online_feature_class() {
 
     assert_eq!(
         signed_payload,
-        "246e3256-f0dd-4fcb-82c5-ee20c2267eeb\n41cb3f47-894c-45e9-90d9-a4d4de903896\nonline\n1777630000\nnonce-1\n{}"
+        "246e3256-f0dd-4fcb-82c5-ee20c2267eeb\n41cb3f47-894c-45e9-90d9-a4d4de903896\nonline\n1777630000\n00112233445566778899aabbccddeeff\n{}"
     );
 }
 
@@ -268,6 +288,38 @@ fn notification_log_omits_protected_fields() {
     assert!(!log_line.contains("signature"));
     assert!(!log_line.contains("secret-nonce"));
     assert!(!log_line.contains("secret-signature"));
+}
+
+#[test]
+fn validate_signed_envelope_rejects_malformed_nonce() {
+    let notification = Notification {
+        device_uuid: "246e3256-f0dd-4fcb-82c5-ee20c2267eeb".to_string(),
+        feature_uuid: "41cb3f47-894c-45e9-90d9-a4d4de903896".to_string(),
+        timestamp: 1_777_630_000,
+        nonce: "00112233-4455-6677-8899-aabbccddeeff".to_string(),
+        signature: "00".repeat(32),
+        payload: serde_json::json!({}),
+    };
+
+    let err = validate_signed_envelope(&notification).expect_err("malformed nonce must fail validation");
+
+    assert_eq!(err.to_string(), "nonce must be 32 lowercase hex characters");
+}
+
+#[test]
+fn validate_signed_envelope_rejects_malformed_signature() {
+    let notification = Notification {
+        device_uuid: "246e3256-f0dd-4fcb-82c5-ee20c2267eeb".to_string(),
+        feature_uuid: "41cb3f47-894c-45e9-90d9-a4d4de903896".to_string(),
+        timestamp: 1_777_630_000,
+        nonce: "00112233445566778899aabbccddeeff".to_string(),
+        signature: "not-hex".to_string(),
+        payload: serde_json::json!({}),
+    };
+
+    let err = validate_signed_envelope(&notification).expect_err("malformed signature must fail validation");
+
+    assert_eq!(err.to_string(), "signature must be 64 lowercase hex characters");
 }
 
 #[cfg(test)]
