@@ -107,6 +107,26 @@ fn notification_summary_log(notification: &Notification<Value>) -> String {
     )
 }
 
+#[cfg(test)]
+fn valid_signed_notification() -> Notification<Value> {
+    Notification {
+        device_uuid: "246e3256-f0dd-4fcb-82c5-ee20c2267eeb".to_string(),
+        feature_uuid: "41cb3f47-894c-45e9-90d9-a4d4de903896".to_string(),
+        timestamp: SystemTime::now().duration_since(UNIX_EPOCH).expect("system clock").as_secs() as i64,
+        nonce: "00112233445566778899aabbccddeeff".to_string(),
+        signature: "00".repeat(32),
+        payload: serde_json::json!({ "value": 1 }),
+    }
+}
+
+#[cfg(test)]
+fn sign_notification(api_token: &str, notification: &mut Notification<Value>) {
+    let signed_payload = build_signed_mqtt_payload(notification).expect("signed payload");
+    let mut mac = HmacSha256::new_from_slice(api_token.as_bytes()).expect("HMAC accepts any key length");
+    mac.update(signed_payload.as_bytes());
+    notification.signature = hex::encode(mac.finalize().into_bytes());
+}
+
 #[rocket::main]
 #[allow(clippy::result_large_err)]
 async fn main() -> Result<(), rocket::Error> {
@@ -320,6 +340,86 @@ fn validate_signed_envelope_rejects_malformed_signature() {
     let err = validate_signed_envelope(&notification).expect_err("malformed signature must fail validation");
 
     assert_eq!(err.to_string(), "signature must be 64 lowercase hex characters");
+}
+
+#[test]
+fn validate_signed_envelope_accepts_valid_envelope() {
+    let notification = valid_signed_notification();
+
+    validate_signed_envelope(&notification).expect("valid envelope should pass");
+}
+
+#[test]
+fn validate_signed_envelope_rejects_non_positive_timestamp() {
+    let mut notification = valid_signed_notification();
+    notification.timestamp = 0;
+
+    let err = validate_signed_envelope(&notification).expect_err("zero timestamp must fail validation");
+
+    assert_eq!(err.to_string(), "timestamp must be positive");
+}
+
+#[test]
+fn validate_signed_envelope_rejects_uppercase_nonce() {
+    let mut notification = valid_signed_notification();
+    notification.nonce = "00112233445566778899AABBCCDDEEFF".to_string();
+
+    let err = validate_signed_envelope(&notification).expect_err("uppercase nonce must fail validation");
+
+    assert_eq!(err.to_string(), "nonce must be 32 lowercase hex characters");
+}
+
+#[test]
+fn validate_signed_envelope_rejects_uppercase_signature() {
+    let mut notification = valid_signed_notification();
+    notification.signature = "AABBCCDDEEFF00112233445566778899AABBCCDDEEFF00112233445566778899".to_string();
+
+    let err = validate_signed_envelope(&notification).expect_err("uppercase signature must fail validation");
+
+    assert_eq!(err.to_string(), "signature must be 64 lowercase hex characters");
+}
+
+#[test]
+fn verify_hmac_rejects_wrong_signature() {
+    let is_valid = verify_hmac("secret", b"message", &"00".repeat(32));
+
+    assert!(!is_valid);
+}
+
+#[test]
+fn verify_hmac_rejects_non_hex_signature() {
+    let is_valid = verify_hmac("secret", b"message", "not-hex");
+
+    assert!(!is_valid);
+}
+
+#[test]
+fn verify_mqtt_signature_accepts_current_signed_payload() {
+    let api_token = "sensor-api-token";
+    let mut notification = valid_signed_notification();
+    sign_notification(api_token, &mut notification);
+
+    verify_mqtt_signature(api_token, &notification).expect("valid signature should pass");
+}
+
+#[test]
+fn verify_mqtt_signature_rejects_wrong_api_token() {
+    let mut notification = valid_signed_notification();
+    sign_notification("correct-token", &mut notification);
+
+    let err = verify_mqtt_signature("wrong-token", &notification).expect_err("wrong API token must fail validation");
+
+    assert_eq!(err.to_string(), "invalid signed MQTT payload");
+}
+
+#[test]
+fn verify_mqtt_signature_rejects_stale_timestamp() {
+    let mut notification = valid_signed_notification();
+    notification.timestamp = 1;
+
+    let err = verify_mqtt_signature("sensor-api-token", &notification).expect_err("stale message must fail validation");
+
+    assert_eq!(err.to_string(), "message timestamp is outside the allowed freshness window");
 }
 
 #[cfg(test)]

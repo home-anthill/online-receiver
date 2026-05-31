@@ -1,5 +1,14 @@
 # Changelog
 
+## 3.0.1
+
+### Tests
+
+- Added unit coverage for valid and invalid signed MQTT envelopes, including non-positive timestamps and uppercase nonce/signature rejection.
+- Added HMAC verification tests for valid signatures, wrong API tokens, stale timestamps, malformed hex, and mismatched signatures.
+- Added MQTT payload helper tests for invalid UTF-8, oversized payloads, invalid topics, and invalid JSON.
+- Simplified pure unit tests by removing unnecessary `test_log` logger initialization from topic and MQTT payload tests.
+
 ## 3.0.0
 
 ### Features

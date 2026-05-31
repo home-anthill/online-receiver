@@ -36,7 +36,6 @@ mod tests {
     use pretty_assertions::assert_eq;
 
     #[test]
-    #[test_log::test]
     fn check_topic_display() {
         let device_uuid = "246e3256-f0dd-4fcb-82c5-ee20c2267eeb";
         let feature_uuid = "b6505821-3ac9-45e6-9018-72d3ecb9b591";
@@ -46,7 +45,6 @@ mod tests {
     }
 
     #[test]
-    #[test_log::test]
     fn check_topic_invalid() {
         let result = Topic::new("invalid/topic");
         assert!(result.is_err());

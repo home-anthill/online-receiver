@@ -40,10 +40,9 @@ pub fn get_string_payload(msg: &Message) -> Result<String, anyhow::Error> {
 
 #[cfg(test)]
 mod tests {
-    use crate::config::init;
     use crate::models::get_msg_byte;
     use crate::models::topic::Topic;
-    use crate::mqtt::get_bytes_from_payload;
+    use crate::mqtt::{MAX_PAYLOAD_BYTES, get_bytes_from_payload, get_string_payload};
     use paho_mqtt::Message;
     use pretty_assertions::assert_eq;
     use serde_json::json;
@@ -67,11 +66,7 @@ mod tests {
     }
 
     #[test]
-    #[test_log::test]
     fn ok_get_bytes_from_payload() {
-        // init logger and env
-        let _ = init();
-
         // create a paho_mqtt::Message
         let device_uuid = "246e3256-f0dd-4fcb-82c5-ee20c2267eeb";
         let feature_uuid = "6ba7ed96-a041-44a5-8b90-98e66eacfeee";
@@ -92,5 +87,41 @@ mod tests {
         let result = from_utf8(bytes.as_slice()).unwrap();
         let expected_value = get_expected_json_string(device_uuid, feature_uuid, &topic);
         assert_eq!(result.to_string(), expected_value);
+    }
+
+    #[test]
+    fn get_string_payload_rejects_non_utf8_payload() {
+        let message = Message::new("online/device/features/feature", vec![0xff, 0xfe], 0);
+
+        let err = get_string_payload(&message).expect_err("invalid UTF-8 must be rejected");
+
+        assert_eq!(err.to_string(), "Cannot parse message payload error");
+    }
+
+    #[test]
+    fn get_string_payload_rejects_payload_over_size_limit() {
+        let message = Message::new("online/device/features/feature", vec![b'a'; MAX_PAYLOAD_BYTES + 1], 0);
+
+        let err = get_string_payload(&message).expect_err("oversized payload must be rejected");
+
+        assert_eq!(err.to_string(), "Message payload exceeds maximum allowed size");
+    }
+
+    #[test]
+    fn get_bytes_from_payload_rejects_invalid_topic() {
+        let message = Message::new("invalid/topic", "{}", 0);
+
+        let err = get_bytes_from_payload(&message).expect_err("invalid topic must be rejected");
+
+        assert_eq!(err.to_string(), "Cannot parse message payload error");
+    }
+
+    #[test]
+    fn get_bytes_from_payload_rejects_invalid_json_payload() {
+        let message = Message::new("online/device/features/feature", "not-json", 0);
+
+        let err = get_bytes_from_payload(&message).expect_err("invalid JSON must be rejected");
+
+        assert!(err.to_string().contains("expected ident"));
     }
 }
