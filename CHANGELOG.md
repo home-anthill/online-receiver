@@ -2,6 +2,11 @@
 
 ## 3.0.1
 
+### Bug fixes
+
+- `insert_or_update_online()` now writes `createdAt` when an existing Redis hash is missing it,
+  so notification-preference-only hashes are completed correctly on the next heartbeat.
+
 ### Tests
 
 - Added unit coverage for valid and invalid signed MQTT envelopes, including non-positive timestamps and uppercase nonce/signature rejection.

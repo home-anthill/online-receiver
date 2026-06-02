@@ -40,15 +40,25 @@ pub async fn insert_or_update_online(
         RedisError::IsExistsError
     })?;
     let timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis().to_string();
-    let fcm_token: Option<String> = match con.hget(FCM_BY_API_TOKEN_KEY, api_token).await {
-        Ok(val) => val,
-        Err(e) => {
-            error!(target: "app", "insert_or_update_online - Redis hget fcmToken error: {:?}", e);
+    // Preserve the original creation timestamp for an existing online-status hash. We cannot rely only on
+    // `EXISTS`: an older or partially written Redis entry may exist without `createdAt`, and then skipping
+    // the field would leave the record permanently missing its creation time. Reading `createdAt` first lets
+    // updates keep the historical value, while missing or unreadable values fall back to setting `createdAt`
+    // to the current heartbeat timestamp so the hash is repaired on the next successful write.
+    let created_at: Option<String> = if is_exists {
+        con.hget(&db_key, "createdAt").await.unwrap_or_else(|e| {
+            error!(target: "app", "insert_or_update_online - Redis hget createdAt error: {:?}", e);
             None
-        }
+        })
+    } else {
+        None
     };
+    let fcm_token: Option<String> = con.hget(FCM_BY_API_TOKEN_KEY, api_token).await.unwrap_or_else(|e| {
+        error!(target: "app", "insert_or_update_online - Redis hget fcmToken error: {:?}", e);
+        None
+    });
     let mut fields = vec![("apiToken", api_token), ("modifiedAt", timestamp.as_str())];
-    if !is_exists {
+    if created_at.is_none() {
         fields.push(("createdAt", timestamp.as_str()));
     }
     if let Some(fcm_token) = fcm_token.as_deref() {
