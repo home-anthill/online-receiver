@@ -7,6 +7,10 @@
 - `insert_or_update_online()` now writes `createdAt` when an existing Redis hash is missing it,
   so notification-preference-only hashes are completed correctly on the next heartbeat.
 
+### Refactor
+
+- Added a separate Redis replay-cache connection so `signed-replay:*` nonce keys are written to database `/2` while online status remains in `/0`.
+
 ### Tests
 
 - Added unit coverage for valid and invalid signed MQTT envelopes, including non-positive timestamps and uppercase nonce/signature rejection.

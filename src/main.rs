@@ -100,6 +100,41 @@ fn ensure_signed_nonce_claimed(result: Option<String>) -> Result<(), anyhow::Err
     Ok(())
 }
 
+fn redis_uri_for_database(redis_uri: &str, database: u8) -> String {
+    let Some(scheme_end) = redis_uri.find("://") else {
+        return redis_uri.to_string();
+    };
+    let authority_start = scheme_end + 3;
+    let query_start = redis_uri[authority_start..].find('?').map(|index| authority_start + index);
+    let path_start = redis_uri[authority_start..].find('/').map(|index| authority_start + index);
+    let end_before_query = query_start.unwrap_or(redis_uri.len());
+    let authority_end = match path_start {
+        Some(index) if index < end_before_query => index,
+        _ => end_before_query,
+    };
+    let query = query_start.map(|index| &redis_uri[index..]).unwrap_or("");
+    format!("{}{}/{}{}", &redis_uri[..authority_start], &redis_uri[authority_start..authority_end], database, query)
+}
+
+fn redis_url_with_credentials(redis_uri: &str, redis_username: &str, redis_password: &str) -> String {
+    if redis_password.is_empty() {
+        return redis_uri.to_string();
+    }
+    match redis_uri.find("://") {
+        Some(scheme_end) => format!(
+            "{scheme}{username}:{password}@{rest}",
+            scheme = &redis_uri[..scheme_end + 3],
+            username = urlencoding::encode(redis_username),
+            password = urlencoding::encode(redis_password),
+            rest = &redis_uri[scheme_end + 3..],
+        ),
+        None => {
+            warn!(target: "app", "REDIS_URI has no recognizable scheme (missing '://'), skipping credential injection");
+            redis_uri.to_string()
+        }
+    }
+}
+
 fn notification_summary_log(notification: &Notification<Value>) -> String {
     format!(
         "device_uuid={}, feature_uuid={}, payload={}",
@@ -139,25 +174,15 @@ async fn main() -> Result<(), rocket::Error> {
     if !env.redis_username.is_empty() && env.redis_password.is_empty() {
         warn!(target: "app", "REDIS_USERNAME is set but REDIS_PASSWORD is empty — no authentication will be attempted");
     }
-    let redis_url = if env.redis_password.is_empty() {
-        env.redis_uri.clone()
-    } else {
-        match env.redis_uri.find("://") {
-            Some(scheme_end) => format!(
-                "{scheme}{username}:{password}@{rest}",
-                scheme = &env.redis_uri[..scheme_end + 3],
-                username = urlencoding::encode(&env.redis_username),
-                password = urlencoding::encode(&env.redis_password),
-                rest = &env.redis_uri[scheme_end + 3..],
-            ),
-            None => {
-                warn!(target: "app", "REDIS_URI has no recognizable scheme (missing '://'), skipping credential injection");
-                env.redis_uri.clone()
-            }
-        }
-    };
+    let redis_url = redis_url_with_credentials(&env.redis_uri, &env.redis_username, &env.redis_password);
+    let replay_redis_uri = env.redis_replay_uri.clone().unwrap_or_else(|| redis_uri_for_database(&env.redis_uri, 2));
+    let replay_redis_url = redis_url_with_credentials(&replay_redis_uri, &env.redis_username, &env.redis_password);
+
     let redis_client = redis::Client::open(redis_url).expect("invalid Redis URI");
     let con: ConnectionManager = redis_client.get_connection_manager().await.expect("failed to connect to Redis");
+    let replay_redis_client = redis::Client::open(replay_redis_url).expect("invalid replay Redis URI");
+    let replay_con: ConnectionManager =
+        replay_redis_client.get_connection_manager().await.expect("failed to connect to replay Redis");
 
     let mongo_db = online::db::sensor::connect_mongodb(&env.mongodb_url).await.expect("failed to connect to MongoDB");
 
@@ -173,7 +198,7 @@ async fn main() -> Result<(), rocket::Error> {
     let mqtt_handle = tokio::task::spawn(async move {
         info!(target: "app", "Waiting for incoming MQTT messages");
         while let Some(msg_opt) = mqtt_client.get_next_message().await {
-            let _ = process_mqtt_message(&msg_opt, &mut mqtt_client, &con, &mongo_db).await.inspect_err(|err| {
+            let _ = process_mqtt_message(&msg_opt, &mut mqtt_client, &con, &replay_con, &mongo_db).await.inspect_err(|err| {
                 let topic = msg_opt.as_ref().map(|msg| msg.topic()).unwrap_or("[disconnected]");
                 error!(target: "app", "process_mqtt_message - failed to process MQTT message topic={}, err={:?}", topic, err);
             });
@@ -204,6 +229,7 @@ async fn process_mqtt_message(
     msg_opt: &Option<Message>,
     mqtt_client: &mut MqttClient,
     con: &ConnectionManager,
+    replay_con: &ConnectionManager,
     mongo_db: &Database,
 ) -> Result<(), anyhow::Error> {
     if let Some(msg) = msg_opt {
@@ -232,7 +258,7 @@ async fn process_mqtt_message(
                 .await?
                 .ok_or_else(|| anyhow::anyhow!("registered online sensor not found"))?;
         verify_mqtt_signature(&api_token, &notification)?;
-        claim_signed_nonce(con, &notification).await?;
+        claim_signed_nonce(replay_con, &notification).await?;
         db_update(con, &api_token, &notification.device_uuid, &notification.feature_uuid).await.inspect_err(|err| {
             error!(target: "app", "process_mqtt_message - cannot insert/update online in db, err = {:?}", err);
         })?;
@@ -266,6 +292,23 @@ fn signed_nonce_claim_result_rejects_existing_key() {
     assert!(ensure_signed_nonce_claimed(Some("OK".to_string())).is_ok());
     let err = ensure_signed_nonce_claimed(None).expect_err("duplicate nonce must be rejected");
     assert_eq!(err.to_string(), "replayed signed nonce detected");
+}
+
+#[test]
+fn redis_uri_for_database_sets_replay_database() {
+    assert_eq!(redis_uri_for_database("redis://localhost:6379/0", 2), "redis://localhost:6379/2");
+    assert_eq!(
+        redis_uri_for_database("redis://redis.example:6379?protocol=3", 2),
+        "redis://redis.example:6379/2?protocol=3"
+    );
+}
+
+#[test]
+fn redis_url_with_credentials_preserves_database() {
+    assert_eq!(
+        redis_url_with_credentials("redis://localhost:6379/2", "redis user", "pa:ss"),
+        "redis://redis%20user:pa%3Ass@localhost:6379/2"
+    );
 }
 
 #[test]

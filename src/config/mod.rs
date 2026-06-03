@@ -35,6 +35,7 @@ pub struct Env {
     pub log_level: Option<String>,
     pub mongodb_url: String,
     pub redis_uri: String,
+    pub redis_replay_uri: Option<String>,
     pub redis_username: String,
     pub redis_password: String,
     pub mqtt_url: String,
@@ -55,6 +56,7 @@ impl fmt::Debug for Env {
             .field("log_level", &self.log_level)
             .field("mongodb_url = {}", &"[REDACTED]")
             .field("redis_uri = {}", &"[REDACTED]")
+            .field("redis_replay_uri = {}", &"[REDACTED]")
             .field("redis_username = {}", &self.redis_username)
             .field("redis_password = {}", &"[REDACTED]")
             .field("mqtt_url = {}", &self.mqtt_url)
@@ -124,6 +126,7 @@ fn print_env(env: &Env) {
     info!(target: "app", "log_level = {}", env.log_level.as_deref().unwrap_or("debug"));
     info!(target: "app", "mongodb_url = [REDACTED]");
     info!(target: "app", "redis_uri = [REDACTED]");
+    info!(target: "app", "redis_replay_uri = [REDACTED]");
     info!(target: "app", "redis_username = {}", env.redis_username);
     info!(target: "app", "redis_password = {}", !env.redis_password.is_empty());
     info!(target: "app", "mqtt_url = {}", env.mqtt_url);
