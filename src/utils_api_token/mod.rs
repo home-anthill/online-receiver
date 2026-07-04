@@ -1,5 +1,5 @@
-use aes_gcm::aead::{Aead, KeyInit};
-use aes_gcm::{Aes256Gcm, Nonce};
+use aes_gcm::Aes256Gcm;
+use aes_gcm::aead::{Aead, KeyInit, Nonce};
 use base64::Engine;
 use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
 
@@ -11,9 +11,8 @@ pub fn decrypt_api_token(encrypted: &str) -> Result<String, String> {
         return Err("encrypted api token is too short".to_string());
     }
     let cipher = Aes256Gcm::new_from_slice(&api_token_encryption_key()?).map_err(|err| err.to_string())?;
-    let plaintext = cipher
-        .decrypt(Nonce::from_slice(&raw[..API_TOKEN_NONCE_SIZE]), &raw[API_TOKEN_NONCE_SIZE..])
-        .map_err(|err| err.to_string())?;
+    let nonce = Nonce::<Aes256Gcm>::try_from(&raw[..API_TOKEN_NONCE_SIZE]).map_err(|err| err.to_string())?;
+    let plaintext = cipher.decrypt(&nonce, &raw[API_TOKEN_NONCE_SIZE..]).map_err(|err| err.to_string())?;
     String::from_utf8(plaintext).map_err(|err| err.to_string())
 }
 
