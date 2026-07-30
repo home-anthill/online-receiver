@@ -1,6 +1,14 @@
 # Changelog
 
-## 3.0.1
+
+## 4.0.0
+
+### Features
+
+- Renamed the service, Cargo package/binary, Docker image, MQTT client identity, and repository references from `online-receiver` to `alarm-receiver`; the `online/+/features/+` heartbeat topic is unchanged.
+- Subscribed to `alarms/+/features/+/+` and added strict parsing for generic alarm topics.
+- Added signed `motion` and `thermostat-mode-error` alarm validation, using the registered MongoDB feature name in the canonical HMAC payload.
+- Stored pending generic alarm events in Redis DB 3 with a 24-hour TTL and a sorted pending index.
 
 ### Bug fixes
 
@@ -10,6 +18,7 @@
 ### Refactor
 
 - Added a separate Redis replay-cache connection so `signed-replay:*` nonce keys are written to database `/2` while online status remains in `/0`.
+- Added a separate `ALARMS_REDIS_URI` connection targeting database `/3`.
 
 ### Tests
 
@@ -17,6 +26,7 @@
 - Added HMAC verification tests for valid signatures, wrong API tokens, stale timestamps, malformed hex, and mismatched signatures.
 - Added MQTT payload helper tests for invalid UTF-8, oversized payloads, invalid topics, and invalid JSON.
 - Simplified pure unit tests by removing unnecessary `test_log` logger initialization from topic and MQTT payload tests.
+
 
 ## 3.0.0
 

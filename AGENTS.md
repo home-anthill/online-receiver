@@ -4,7 +4,7 @@ This file provides guidance to coding agents when working with code in this repo
 
 ## Project Overview
 
-online-receiver is a Rust microservice in the [home-anthill](https://github.com/home-anthill/docs) smart home system. It subscribes to MQTT topics (`online/+/features/+`), parses incoming JSON notifications, and stores/updates device online status in Redis with timestamps.
+alarm-receiver is a Rust microservice in the home-anthill smart home system. It subscribes to heartbeat (`online/+/features/+`) and generic alarm (`alarms/+/features/+/+`) MQTT topics, validates signed envelopes, updates online state in Redis DB 0, and queues alarms in Redis DB 3.
 
 ## Build & Development Commands
 
@@ -34,13 +34,13 @@ Run a single test: `cargo test <test_name> -- --nocapture --test-threads 1`
 **Module structure:**
 - **config/** — `Env` struct deserialized from environment variables (with `#[serde(default)]` for optional fields like `redis_username` and `redis_password` to maintain backwards compatibility); logging setup (daily rolling files via tracing)
 - **mqtt/** — `MqttClient` (async paho-mqtt wrapper), `MqttOptions` (connection/TLS builder with proper error propagation), `MqttConfig`, `get_string_payload` / `get_bytes_from_payload` helpers; subscribes at QoS 0 with `clean_session(true)` because online heartbeats are ephemeral and stale persistent subscriptions can duplicate deliveries after restarts
-- **db/** — `insert_or_update_online()` — Redis hash keyed as `online_{device_uuid}_feature_{feature_uuid}`; on first write sets `apiToken`, `createdAt`, and `modifiedAt` (Unix ms) with equal timestamps; on update preserves `createdAt` and sets `apiToken` + `modifiedAt`; all three UUIDs (`api_token`, `device_uuid`, `feature_uuid`) validated as UUIDv4 to prevent Redis key injection
+- **db/** — `insert_or_update_online()` manages DB 0 heartbeat hashes; `insert_alarm_event()` writes a 24-hour DB 3 event hash plus the `alarms:pending` sorted-set index. UUIDs are validated before Redis key interpolation.
 - **models/** — Two distinct envelope types: `Notification<T>` is the raw MQTT JSON (just `apiToken`, `deviceUuid`, `featureUuid`, `payload`); `Message<T>` is the internal form that additionally embeds the parsed `Topic`. `OnlineMqttPayload` is intentionally empty — the `payload` field in incoming JSON is always `{}`. `Topic` parses `online/{device_uuid}/features/{feature_uuid}` topic strings.
 - **errors/** — Custom error enums via `thiserror` (`MessageError` with `PayloadTooLargeError`, `RedisError` with `InvalidUuidError`, `MqttError` with `SslConfigError`); `ApiResponse` / `ApiError` types (in `api_error.rs`) implement Rocket's `Responder` for JSON HTTP responses
 - **routes/** — `GET /keepalive` returns `{"alive": true}` with HTTP 200; used by Kubernetes liveness probes
 - **catchers/** — Rocket error catchers for HTTP 400, 404, 500, 503; log via `tracing::error!` and return `ApiError` JSON
 
-**Message flow:** MQTT message → size-check payload (64 KiB limit) → validate UTF-8 → parse JSON as `Notification<OnlineMqttPayload>` → validate topic/payload match → verify signed MQTT HMAC using `deviceUuid\nfeatureUuid\nonline\ntimestamp\nnonce\npayloadJson` → claim signed nonce in Redis → insert/update Redis hash with timestamp (Unix ms) → reconnect on disconnection (5s retry).
+**Message flow:** MQTT message → size/UTF-8/JSON checks → strict topic binding → load API token and registered feature name from MongoDB → verify `deviceUuid\nfeatureUuid\nfeatureName\ntimestamp\nnonce\npayloadJson` HMAC → claim nonce in Redis DB 2 → update DB 0 heartbeat state or queue a DB 3 alarm. `motion` requires `value=1`; `thermostat-mode-error` is allowed only for a registered `mode` feature and requires `value=-1`.
 
 The MQTT processing path logs received, parsed, and successfully processed messages at `INFO` with `target: "app"` so they appear on stdout in development and production. Message metadata logs include only useful clear-text identifiers and payload (`device_uuid`, `feature_uuid`, `payload`); protected protocol fields such as `timestamp`, `nonce`, and `signature` are omitted. Raw MQTT payloads must not be logged, even at `DEBUG`. Processing failures are logged at `ERROR` with the MQTT topic when available.
 
@@ -90,13 +90,13 @@ The MQTT processing path logs received, parsed, and successfully processed messa
 5. **Runtime** (`dhi.io/debian-base:trixie`) — hardened image, no package manager; copies CA certs, app dir, and binary; runs as UID 65534 (`nobody`)
 
 ```bash
-docker build -t ks89/online-receiver:latest .
+docker build -t ks89/alarm-receiver:latest .
 ```
 
 ## Environment Variables
 
 See `.env_template` for all required variables. Key settings:
 
-- **Redis**: `REDIS_URI` (connection string), `REDIS_USERNAME` (optional, defaults to empty), `REDIS_PASSWORD` (optional). If both are set, credentials are injected into the URI before connecting (e.g., `redis://host:port` becomes `redis://user:pass@host:port`). If username is set but password is empty, a warning is logged and no authentication is attempted.
-- **MQTT**: `MQTT_URL`, `MQTT_PORT`, `MQTT_CLIENT_ID`, `MQTT_AUTH`, `MQTT_USER`, `MQTT_PASSWORD`, `MQTT_TLS`, `ROOT_CA`, `MQTT_CERT_FILE`, `MQTT_KEY_FILE`. The sample `.env_template` uses a dedicated subscriber account (`online_receiver_sub`) for this service.
+- **Redis**: `ONLINE_REDIS_URI` selects online DB 0, `REPLAY_REDIS_URI` selects replay DB 2, and `ALARMS_REDIS_URI` selects alarms DB 3. DB 15 is test-only. Credentials are injected consistently into all three URIs.
+- **MQTT**: `MQTT_URL`, `MQTT_PORT`, `MQTT_CLIENT_ID`, `MQTT_AUTH`, `MQTT_USER`, `MQTT_PASSWORD`, `MQTT_TLS`, `ROOT_CA`, `MQTT_CERT_FILE`, `MQTT_KEY_FILE`. The sample `.env_template` uses a dedicated subscriber account (`alarm_receiver_sub`) for this service.
 - **Logging**: `LOG_LEVEL` controls tracing filter (debug, info, warn, error)

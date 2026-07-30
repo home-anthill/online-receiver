@@ -34,8 +34,9 @@ impl AppEnv {
 pub struct Env {
     pub log_level: Option<String>,
     pub mongodb_url: String,
-    pub redis_uri: String,
-    pub redis_replay_uri: Option<String>,
+    pub online_redis_uri: String,
+    pub replay_redis_uri: String,
+    pub alarms_redis_uri: String,
     pub redis_username: String,
     pub redis_password: String,
     pub mqtt_url: String,
@@ -54,20 +55,21 @@ impl fmt::Debug for Env {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Env")
             .field("log_level", &self.log_level)
-            .field("mongodb_url = {}", &"[REDACTED]")
-            .field("redis_uri = {}", &"[REDACTED]")
-            .field("redis_replay_uri = {}", &"[REDACTED]")
-            .field("redis_username = {}", &self.redis_username)
-            .field("redis_password = {}", &"[REDACTED]")
-            .field("mqtt_url = {}", &self.mqtt_url)
-            .field("mqtt_port = {}", &self.mqtt_port)
-            .field("mqtt_client_id = {}", &self.mqtt_client_id)
-            .field("mqtt_auth = {}", &self.mqtt_auth)
-            .field("mqtt_user = {}", &"[REDACTED]")
-            .field("mqtt_tls = {}", &self.mqtt_tls)
-            .field("root_ca = {}", &self.root_ca)
-            .field("mqtt_cert_file = {}", &self.mqtt_cert_file)
-            .field("mqtt_key_file = {}", &self.mqtt_key_file)
+            .field("mongodb_url", &"[REDACTED]")
+            .field("online_redis_uri", &"[REDACTED]")
+            .field("replay_redis_uri", &"[REDACTED]")
+            .field("alarms_redis_uri", &"[REDACTED]")
+            .field("redis_username", &self.redis_username)
+            .field("redis_password", &"[REDACTED]")
+            .field("mqtt_url", &self.mqtt_url)
+            .field("mqtt_port", &self.mqtt_port)
+            .field("mqtt_client_id", &self.mqtt_client_id)
+            .field("mqtt_auth", &self.mqtt_auth)
+            .field("mqtt_user", &"[REDACTED]")
+            .field("mqtt_tls", &self.mqtt_tls)
+            .field("root_ca", &self.root_ca)
+            .field("mqtt_cert_file", &self.mqtt_cert_file)
+            .field("mqtt_key_file", &self.mqtt_key_file)
             .finish()
     }
 }
@@ -125,10 +127,11 @@ pub fn init() -> (Env, AppEnv) {
 fn print_env(env: &Env) {
     info!(target: "app", "log_level = {}", env.log_level.as_deref().unwrap_or("debug"));
     info!(target: "app", "mongodb_url = [REDACTED]");
-    info!(target: "app", "redis_uri = [REDACTED]");
-    info!(target: "app", "redis_replay_uri = [REDACTED]");
+    info!(target: "app", "online_redis_uri = [REDACTED]");
+    info!(target: "app", "replay_redis_uri = [REDACTED]");
+    info!(target: "app", "alarms_redis_uri = [REDACTED]");
     info!(target: "app", "redis_username = {}", env.redis_username);
-    info!(target: "app", "redis_password = {}", !env.redis_password.is_empty());
+    info!(target: "app", "redis_password = [REDACTED]");
     info!(target: "app", "mqtt_url = {}", env.mqtt_url);
     info!(target: "app", "mqtt_port = {}", env.mqtt_port);
     info!(target: "app", "mqtt_client_id = {}", env.mqtt_client_id);

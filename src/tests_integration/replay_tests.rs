@@ -4,7 +4,7 @@ use redis::aio::ConnectionManager;
 use serde_json::{Value, json};
 use uuid::Uuid;
 
-use online::models::notification::Notification;
+use alarm_receiver::models::notification::Notification;
 
 use crate::{claim_signed_nonce, signed_replay_key};
 
@@ -22,10 +22,10 @@ fn notification_with_nonce(device_uuid: &str, feature_uuid: &str, nonce: &str) -
 // Replaying a valid signed payload would repeat the original side effect even though the
 // HMAC is still valid (attackers can use this for their purposes),
 // so this verifies Redis rejects the same signed nonce after first use.
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn claim_signed_nonce_rejects_duplicate_with_real_redis() {
     dotenv().ok();
-    let redis_url = std::env::var("REDIS_URI").unwrap();
+    let redis_url = std::env::var("REPLAY_REDIS_URI").unwrap();
     let redis_client = redis::Client::open(redis_url).expect("valid Redis URL");
     let con: ConnectionManager = redis_client.get_connection_manager().await.expect("Redis connection");
 

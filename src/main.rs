@@ -9,16 +9,16 @@ use serde_json::Value;
 use sha2::Sha256;
 use tracing::{error, info, warn};
 
-use online::catchers as app_catchers;
-use online::config::{AppEnv, Env, init};
-use online::models::notification::Notification;
-use online::mqtt::get_string_payload;
-use online::mqtt::mqtt_client::MqttClient;
-use online::mqtt::mqtt_config::MqttConfig;
-use online::mqtt::mqtt_options::MqttOptions;
-use online::routes as app_routes;
+use alarm_receiver::catchers as app_catchers;
+use alarm_receiver::config::{AppEnv, Env, init};
+use alarm_receiver::models::notification::Notification;
+use alarm_receiver::mqtt::get_string_payload;
+use alarm_receiver::mqtt::mqtt_client::MqttClient;
+use alarm_receiver::mqtt::mqtt_config::MqttConfig;
+use alarm_receiver::mqtt::mqtt_options::MqttOptions;
+use alarm_receiver::routes as app_routes;
 
-const TOPICS: &[&str] = &["online/+/features/+"];
+const TOPICS: &[&str] = &["online/+/features/+", "alarms/+/features/+/+"];
 const SIGNED_MESSAGE_MAX_SKEW_SECS: i64 = 300;
 const SIGNED_REPLAY_CACHE_TTL_SECS: usize = 720;
 const SIGNED_NONCE_HEX_LEN: usize = 32;
@@ -44,7 +44,7 @@ fn validate_signed_envelope(notification: &Notification<Value>) -> Result<(), an
 }
 
 fn verify_hmac(secret: &str, message: &[u8], expected_hex: &str) -> bool {
-    let mut mac = HmacSha256::new_from_slice(secret.as_bytes()).expect("HMAC accepts any key length");
+    let mut mac = <HmacSha256 as KeyInit>::new_from_slice(secret.as_bytes()).expect("HMAC accepts any key length");
     mac.update(message);
     match hex::decode(expected_hex) {
         Ok(expected_bytes) => mac.verify_slice(&expected_bytes).is_ok(),
@@ -55,24 +55,68 @@ fn verify_hmac(secret: &str, message: &[u8], expected_hex: &str) -> bool {
     }
 }
 
-fn build_signed_mqtt_payload(notification: &Notification<Value>) -> Result<String, anyhow::Error> {
+fn build_signed_mqtt_payload(notification: &Notification<Value>, feature_name: &str) -> Result<String, anyhow::Error> {
     let payload_json = serde_json::to_string(&notification.payload)?;
     Ok(format!(
-        "{}\n{}\nonline\n{}\n{}\n{}",
-        notification.device_uuid, notification.feature_uuid, notification.timestamp, notification.nonce, payload_json
+        "{}\n{}\n{}\n{}\n{}\n{}",
+        notification.device_uuid,
+        notification.feature_uuid,
+        feature_name,
+        notification.timestamp,
+        notification.nonce,
+        payload_json
     ))
 }
 
-fn verify_mqtt_signature(api_token: &str, notification: &Notification<Value>) -> Result<(), anyhow::Error> {
+fn verify_mqtt_signature(
+    api_token: &str,
+    feature_name: &str,
+    notification: &Notification<Value>,
+) -> Result<(), anyhow::Error> {
     let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs() as i64;
     if (now - notification.timestamp).abs() > SIGNED_MESSAGE_MAX_SKEW_SECS {
         anyhow::bail!("message timestamp is outside the allowed freshness window");
     }
-    let signed_payload = build_signed_mqtt_payload(notification)?;
+    let signed_payload = build_signed_mqtt_payload(notification, feature_name)?;
     if !verify_hmac(api_token, signed_payload.as_bytes(), &notification.signature) {
         anyhow::bail!("invalid signed MQTT payload");
     }
     Ok(())
+}
+
+fn alarm_type_for_topic(
+    topic: &alarm_receiver::models::topic::Topic,
+    registered_feature_name: &str,
+) -> Result<Option<String>, anyhow::Error> {
+    if topic.family == "online" {
+        if topic.alarm_type.is_none() && registered_feature_name == "online" {
+            return Ok(None);
+        }
+        anyhow::bail!("MQTT topic is not valid for the registered feature");
+    }
+
+    let Some(alarm_type) = topic.alarm_type.as_deref() else {
+        anyhow::bail!("MQTT topic is not valid for the registered feature");
+    };
+
+    let is_thermostat_mode_error = alarm_type == "thermostat-mode-error" && registered_feature_name == "mode";
+
+    if topic.family != "alarms" || (alarm_type != registered_feature_name && !is_thermostat_mode_error) {
+        anyhow::bail!("MQTT topic is not valid for the registered feature");
+    }
+
+    Ok(Some(alarm_type.to_string()))
+}
+
+fn validate_alarm_payload(alarm_type: &str, payload: &Value) -> Result<(), anyhow::Error> {
+    let value = payload.get("value").and_then(Value::as_f64);
+    match alarm_type {
+        "motion" if value != Some(1.0) => anyhow::bail!("motion alarm payload value must be 1"),
+        "thermostat-mode-error" if value != Some(-1.0) => {
+            anyhow::bail!("thermostat mode error payload value must be -1")
+        }
+        _ => Ok(()),
+    }
 }
 
 fn signed_replay_key(device_uuid: &str, feature_uuid: &str, nonce: &str) -> String {
@@ -100,6 +144,7 @@ fn ensure_signed_nonce_claimed(result: Option<String>) -> Result<(), anyhow::Err
     Ok(())
 }
 
+#[cfg(test)]
 fn redis_uri_for_database(redis_uri: &str, database: u8) -> String {
     let Some(scheme_end) = redis_uri.find("://") else {
         return redis_uri.to_string();
@@ -155,9 +200,9 @@ fn valid_signed_notification() -> Notification<Value> {
 }
 
 #[cfg(test)]
-fn sign_notification(api_token: &str, notification: &mut Notification<Value>) {
-    let signed_payload = build_signed_mqtt_payload(notification).expect("signed payload");
-    let mut mac = HmacSha256::new_from_slice(api_token.as_bytes()).expect("HMAC accepts any key length");
+fn sign_notification(api_token: &str, feature_name: &str, notification: &mut Notification<Value>) {
+    let signed_payload = build_signed_mqtt_payload(notification, feature_name).expect("signed payload");
+    let mut mac = <HmacSha256 as KeyInit>::new_from_slice(api_token.as_bytes()).expect("HMAC accepts any key length");
     mac.update(signed_payload.as_bytes());
     notification.signature = hex::encode(mac.finalize().into_bytes());
 }
@@ -166,7 +211,7 @@ fn sign_notification(api_token: &str, notification: &mut Notification<Value>) {
 #[allow(clippy::result_large_err)]
 async fn main() -> Result<(), rocket::Error> {
     // 1. Init logger and env
-    let (env, _app_env): (Env, AppEnv) = init();
+    let (env, app_env): (Env, AppEnv) = init();
 
     // 2. Init and connect to Redis
     // If credentials are configured, inject them into the URI:
@@ -174,17 +219,22 @@ async fn main() -> Result<(), rocket::Error> {
     if !env.redis_username.is_empty() && env.redis_password.is_empty() {
         warn!(target: "app", "REDIS_USERNAME is set but REDIS_PASSWORD is empty — no authentication will be attempted");
     }
-    let redis_url = redis_url_with_credentials(&env.redis_uri, &env.redis_username, &env.redis_password);
-    let replay_redis_uri = env.redis_replay_uri.clone().unwrap_or_else(|| redis_uri_for_database(&env.redis_uri, 2));
-    let replay_redis_url = redis_url_with_credentials(&replay_redis_uri, &env.redis_username, &env.redis_password);
+    let online_redis_url = redis_url_with_credentials(&env.online_redis_uri, &env.redis_username, &env.redis_password);
+    let replay_redis_url = redis_url_with_credentials(&env.replay_redis_uri, &env.redis_username, &env.redis_password);
+    let alarms_redis_url = redis_url_with_credentials(&env.alarms_redis_uri, &env.redis_username, &env.redis_password);
 
-    let redis_client = redis::Client::open(redis_url).expect("invalid Redis URI");
-    let con: ConnectionManager = redis_client.get_connection_manager().await.expect("failed to connect to Redis");
+    let online_redis_client = redis::Client::open(online_redis_url).expect("invalid Redis URI");
+    let online_con: ConnectionManager =
+        online_redis_client.get_connection_manager().await.expect("failed to connect to Redis");
     let replay_redis_client = redis::Client::open(replay_redis_url).expect("invalid replay Redis URI");
     let replay_con: ConnectionManager =
         replay_redis_client.get_connection_manager().await.expect("failed to connect to replay Redis");
+    let alarms_redis_client = redis::Client::open(alarms_redis_url).expect("invalid alarms Redis URI");
+    let alarms_con: ConnectionManager =
+        alarms_redis_client.get_connection_manager().await.expect("failed to connect to alarms Redis");
 
-    let mongo_db = online::db::sensor::connect_mongodb(&env.mongodb_url).await.expect("failed to connect to MongoDB");
+    let mongo_db =
+        alarm_receiver::db::sensor::connect_mongodb(&env.mongodb_url).await.expect("failed to connect to MongoDB");
 
     // 3. Init and connect to MQTT
     info!(target: "app", "Initializing MQTT...");
@@ -198,7 +248,17 @@ async fn main() -> Result<(), rocket::Error> {
     let mqtt_handle = tokio::task::spawn(async move {
         info!(target: "app", "Waiting for incoming MQTT messages");
         while let Some(msg_opt) = mqtt_client.get_next_message().await {
-            let _ = process_mqtt_message(&msg_opt, &mut mqtt_client, &con, &replay_con, &mongo_db).await.inspect_err(|err| {
+            let _ = process_mqtt_message(
+                &msg_opt,
+                &mut mqtt_client,
+                &online_con,
+                &replay_con,
+                &alarms_con,
+                &mongo_db,
+                app_env.is_testing(),
+            )
+            .await
+            .inspect_err(|err| {
                 let topic = msg_opt.as_ref().map(|msg| msg.topic()).unwrap_or("[disconnected]");
                 error!(target: "app", "process_mqtt_message - failed to process MQTT message topic={}, err={:?}", topic, err);
             });
@@ -230,10 +290,12 @@ async fn process_mqtt_message(
     mqtt_client: &mut MqttClient,
     con: &ConnectionManager,
     replay_con: &ConnectionManager,
+    alarms_con: &ConnectionManager,
     mongo_db: &Database,
+    is_testing: bool,
 ) -> Result<(), anyhow::Error> {
     if let Some(msg) = msg_opt {
-        use online::db::online::insert_or_update_online as db_update;
+        use alarm_receiver::db::online::insert_or_update_online as db_update;
         info!(
             target: "app",
             "process_mqtt_message - received MQTT message topic={}, payload_bytes={}",
@@ -243,7 +305,7 @@ async fn process_mqtt_message(
         let payload_str = get_string_payload(msg)?;
         let notification: Notification<Value> = serde_json::from_str(&payload_str)?;
         validate_signed_envelope(&notification)?;
-        let topic = online::models::topic::Topic::new(msg.topic())?;
+        let topic = alarm_receiver::models::topic::Topic::new(msg.topic())?;
         info!(
             target: "app",
             "process_mqtt_message - parsed MQTT message topic={}, notification={}",
@@ -253,15 +315,38 @@ async fn process_mqtt_message(
         if topic.device_uuid != notification.device_uuid || topic.feature_uuid != notification.feature_uuid {
             anyhow::bail!("topic does not match signed payload");
         }
-        let api_token =
-            online::db::sensor::find_sensor_api_token(mongo_db, &notification.device_uuid, &notification.feature_uuid)
-                .await?
-                .ok_or_else(|| anyhow::anyhow!("registered online sensor not found"))?;
-        verify_mqtt_signature(&api_token, &notification)?;
+        let sensor_auth = alarm_receiver::db::sensor::find_sensor_auth(
+            mongo_db,
+            &notification.device_uuid,
+            &notification.feature_uuid,
+        )
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("registered sensor not found"))?;
+        let alarm_type = alarm_type_for_topic(&topic, &sensor_auth.feature_name)?;
+        verify_mqtt_signature(&sensor_auth.api_token, &sensor_auth.feature_name, &notification)?;
+        if let Some(alarm_type) = &alarm_type {
+            validate_alarm_payload(alarm_type, &notification.payload)?;
+        }
         claim_signed_nonce(replay_con, &notification).await?;
-        db_update(con, &api_token, &notification.device_uuid, &notification.feature_uuid).await.inspect_err(|err| {
-            error!(target: "app", "process_mqtt_message - cannot insert/update online in db, err = {:?}", err);
-        })?;
+        if let Some(alarm_type) = alarm_type {
+            alarm_receiver::db::alarm::insert_alarm_event(
+                alarms_con,
+                &sensor_auth.api_token,
+                &alarm_type,
+                &notification,
+                is_testing,
+            )
+            .await
+            .inspect_err(|err| {
+                error!(target: "app", "process_mqtt_message - cannot insert alarm event in db, err = {:?}", err);
+            })?;
+        } else {
+            db_update(con, &sensor_auth.api_token, &notification.device_uuid, &notification.feature_uuid)
+                .await
+                .inspect_err(|err| {
+                    error!(target: "app", "process_mqtt_message - cannot insert/update online in db, err = {:?}", err);
+                })?;
+        }
         info!(
             target: "app",
             "process_mqtt_message - processed MQTT message topic={}, device_uuid={}, feature_uuid={}",
@@ -281,20 +366,23 @@ async fn process_mqtt_message(
     }
 }
 
-#[test]
+#[cfg(test)]
+#[test_log::test]
 fn signed_replay_key_scopes_nonce_by_device_and_feature() {
     let key = signed_replay_key("device-a", "feature-b", "nonce-c");
     assert_eq!(key, "signed-replay:v1:device-a:feature-b:nonce-c");
 }
 
-#[test]
+#[cfg(test)]
+#[test_log::test]
 fn signed_nonce_claim_result_rejects_existing_key() {
     assert!(ensure_signed_nonce_claimed(Some("OK".to_string())).is_ok());
     let err = ensure_signed_nonce_claimed(None).expect_err("duplicate nonce must be rejected");
     assert_eq!(err.to_string(), "replayed signed nonce detected");
 }
 
-#[test]
+#[cfg(test)]
+#[test_log::test]
 fn redis_uri_for_database_sets_replay_database() {
     assert_eq!(redis_uri_for_database("redis://localhost:6379/0", 2), "redis://localhost:6379/2");
     assert_eq!(
@@ -303,7 +391,8 @@ fn redis_uri_for_database_sets_replay_database() {
     );
 }
 
-#[test]
+#[cfg(test)]
+#[test_log::test]
 fn redis_url_with_credentials_preserves_database() {
     assert_eq!(
         redis_url_with_credentials("redis://localhost:6379/2", "redis user", "pa:ss"),
@@ -311,7 +400,8 @@ fn redis_url_with_credentials_preserves_database() {
     );
 }
 
-#[test]
+#[cfg(test)]
+#[test_log::test]
 fn signed_payload_binds_online_feature_class() {
     let notification = Notification {
         device_uuid: "246e3256-f0dd-4fcb-82c5-ee20c2267eeb".to_string(),
@@ -322,7 +412,7 @@ fn signed_payload_binds_online_feature_class() {
         payload: serde_json::json!({}),
     };
 
-    let signed_payload = build_signed_mqtt_payload(&notification).expect("signed payload");
+    let signed_payload = build_signed_mqtt_payload(&notification, "online").expect("signed payload");
 
     assert_eq!(
         signed_payload,
@@ -330,7 +420,51 @@ fn signed_payload_binds_online_feature_class() {
     );
 }
 
-#[test]
+#[cfg(test)]
+#[test_log::test]
+fn signed_payload_binds_registered_mode_feature() {
+    let notification = Notification {
+        device_uuid: "246e3256-f0dd-4fcb-82c5-ee20c2267eeb".to_string(),
+        feature_uuid: "41cb3f47-894c-45e9-90d9-a4d4de903896".to_string(),
+        timestamp: 1_777_630_000,
+        nonce: "00112233445566778899aabbccddeeff".to_string(),
+        signature: "00".repeat(32),
+        payload: serde_json::json!({ "value": -1 }),
+    };
+
+    let signed_payload = build_signed_mqtt_payload(&notification, "mode").expect("signed payload");
+
+    assert!(signed_payload.contains("\nmode\n1777630000\n"));
+}
+
+#[cfg(test)]
+#[test_log::test]
+fn alarm_topic_must_match_registered_feature() {
+    let motion = alarm_receiver::models::topic::Topic::new(
+        "alarms/246e3256-f0dd-4fcb-82c5-ee20c2267eeb/features/41cb3f47-894c-45e9-90d9-a4d4de903896/motion",
+    )
+    .unwrap();
+    let thermostat = alarm_receiver::models::topic::Topic::new(
+        "alarms/246e3256-f0dd-4fcb-82c5-ee20c2267eeb/features/41cb3f47-894c-45e9-90d9-a4d4de903896/thermostat-mode-error",
+    )
+    .unwrap();
+
+    assert_eq!(alarm_type_for_topic(&motion, "motion").unwrap().as_deref(), Some("motion"));
+    assert_eq!(alarm_type_for_topic(&thermostat, "mode").unwrap().as_deref(), Some("thermostat-mode-error"));
+    assert!(alarm_type_for_topic(&thermostat, "temperature").is_err());
+}
+
+#[cfg(test)]
+#[test_log::test]
+fn known_alarm_payloads_require_trigger_values() {
+    validate_alarm_payload("motion", &serde_json::json!({ "value": 1 })).unwrap();
+    validate_alarm_payload("thermostat-mode-error", &serde_json::json!({ "value": -1 })).unwrap();
+    assert!(validate_alarm_payload("motion", &serde_json::json!({ "value": 0 })).is_err());
+    assert!(validate_alarm_payload("thermostat-mode-error", &serde_json::json!({ "value": 0 })).is_err());
+}
+
+#[cfg(test)]
+#[test_log::test]
 fn notification_log_omits_protected_fields() {
     let notification = Notification {
         device_uuid: "246e3256-f0dd-4fcb-82c5-ee20c2267eeb".to_string(),
@@ -353,7 +487,8 @@ fn notification_log_omits_protected_fields() {
     assert!(!log_line.contains("secret-signature"));
 }
 
-#[test]
+#[cfg(test)]
+#[test_log::test]
 fn validate_signed_envelope_rejects_malformed_nonce() {
     let notification = Notification {
         device_uuid: "246e3256-f0dd-4fcb-82c5-ee20c2267eeb".to_string(),
@@ -369,7 +504,8 @@ fn validate_signed_envelope_rejects_malformed_nonce() {
     assert_eq!(err.to_string(), "nonce must be 32 lowercase hex characters");
 }
 
-#[test]
+#[cfg(test)]
+#[test_log::test]
 fn validate_signed_envelope_rejects_malformed_signature() {
     let notification = Notification {
         device_uuid: "246e3256-f0dd-4fcb-82c5-ee20c2267eeb".to_string(),
@@ -385,14 +521,16 @@ fn validate_signed_envelope_rejects_malformed_signature() {
     assert_eq!(err.to_string(), "signature must be 64 lowercase hex characters");
 }
 
-#[test]
+#[cfg(test)]
+#[test_log::test]
 fn validate_signed_envelope_accepts_valid_envelope() {
     let notification = valid_signed_notification();
 
     validate_signed_envelope(&notification).expect("valid envelope should pass");
 }
 
-#[test]
+#[cfg(test)]
+#[test_log::test]
 fn validate_signed_envelope_rejects_non_positive_timestamp() {
     let mut notification = valid_signed_notification();
     notification.timestamp = 0;
@@ -402,7 +540,8 @@ fn validate_signed_envelope_rejects_non_positive_timestamp() {
     assert_eq!(err.to_string(), "timestamp must be positive");
 }
 
-#[test]
+#[cfg(test)]
+#[test_log::test]
 fn validate_signed_envelope_rejects_uppercase_nonce() {
     let mut notification = valid_signed_notification();
     notification.nonce = "00112233445566778899AABBCCDDEEFF".to_string();
@@ -412,7 +551,8 @@ fn validate_signed_envelope_rejects_uppercase_nonce() {
     assert_eq!(err.to_string(), "nonce must be 32 lowercase hex characters");
 }
 
-#[test]
+#[cfg(test)]
+#[test_log::test]
 fn validate_signed_envelope_rejects_uppercase_signature() {
     let mut notification = valid_signed_notification();
     notification.signature = "AABBCCDDEEFF00112233445566778899AABBCCDDEEFF00112233445566778899".to_string();
@@ -422,45 +562,52 @@ fn validate_signed_envelope_rejects_uppercase_signature() {
     assert_eq!(err.to_string(), "signature must be 64 lowercase hex characters");
 }
 
-#[test]
+#[cfg(test)]
+#[test_log::test]
 fn verify_hmac_rejects_wrong_signature() {
     let is_valid = verify_hmac("secret", b"message", &"00".repeat(32));
 
     assert!(!is_valid);
 }
 
-#[test]
+#[cfg(test)]
+#[test_log::test]
 fn verify_hmac_rejects_non_hex_signature() {
     let is_valid = verify_hmac("secret", b"message", "not-hex");
 
     assert!(!is_valid);
 }
 
-#[test]
+#[cfg(test)]
+#[test_log::test]
 fn verify_mqtt_signature_accepts_current_signed_payload() {
     let api_token = "sensor-api-token";
     let mut notification = valid_signed_notification();
-    sign_notification(api_token, &mut notification);
+    sign_notification(api_token, "online", &mut notification);
 
-    verify_mqtt_signature(api_token, &notification).expect("valid signature should pass");
+    verify_mqtt_signature(api_token, "online", &notification).expect("valid signature should pass");
 }
 
-#[test]
+#[cfg(test)]
+#[test_log::test]
 fn verify_mqtt_signature_rejects_wrong_api_token() {
     let mut notification = valid_signed_notification();
-    sign_notification("correct-token", &mut notification);
+    sign_notification("correct-token", "online", &mut notification);
 
-    let err = verify_mqtt_signature("wrong-token", &notification).expect_err("wrong API token must fail validation");
+    let err = verify_mqtt_signature("wrong-token", "online", &notification)
+        .expect_err("wrong API token must fail validation");
 
     assert_eq!(err.to_string(), "invalid signed MQTT payload");
 }
 
-#[test]
+#[cfg(test)]
+#[test_log::test]
 fn verify_mqtt_signature_rejects_stale_timestamp() {
     let mut notification = valid_signed_notification();
     notification.timestamp = 1;
 
-    let err = verify_mqtt_signature("sensor-api-token", &notification).expect_err("stale message must fail validation");
+    let err = verify_mqtt_signature("sensor-api-token", "online", &notification)
+        .expect_err("stale message must fail validation");
 
     assert_eq!(err.to_string(), "message timestamp is outside the allowed freshness window");
 }

@@ -65,7 +65,7 @@ mod tests {
         .to_string()
     }
 
-    #[test]
+    #[test_log::test]
     fn ok_get_bytes_from_payload() {
         // create a paho_mqtt::Message
         let device_uuid = "246e3256-f0dd-4fcb-82c5-ee20c2267eeb";
@@ -89,7 +89,7 @@ mod tests {
         assert_eq!(result.to_string(), expected_value);
     }
 
-    #[test]
+    #[test_log::test]
     fn get_string_payload_rejects_non_utf8_payload() {
         let message = Message::new("online/device/features/feature", vec![0xff, 0xfe], 0);
 
@@ -98,7 +98,7 @@ mod tests {
         assert_eq!(err.to_string(), "Cannot parse message payload error");
     }
 
-    #[test]
+    #[test_log::test]
     fn get_string_payload_rejects_payload_over_size_limit() {
         let message = Message::new("online/device/features/feature", vec![b'a'; MAX_PAYLOAD_BYTES + 1], 0);
 
@@ -107,7 +107,7 @@ mod tests {
         assert_eq!(err.to_string(), "Message payload exceeds maximum allowed size");
     }
 
-    #[test]
+    #[test_log::test]
     fn get_bytes_from_payload_rejects_invalid_topic() {
         let message = Message::new("invalid/topic", "{}", 0);
 
@@ -116,7 +116,7 @@ mod tests {
         assert_eq!(err.to_string(), "Cannot parse message payload error");
     }
 
-    #[test]
+    #[test_log::test]
     fn get_bytes_from_payload_rejects_invalid_json_payload() {
         let message = Message::new("online/device/features/feature", "not-json", 0);
 
