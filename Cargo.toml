@@ -21,7 +21,7 @@ panic = "abort"
 [dependencies]
 rocket = { version = "^0.5.1", features = ["uuid", "secrets", "json"] }
 tokio = { version = "^1.53.1", features = ["full"] }
-redis = { version = "^1.4.1", features = ["tokio-comp", "connection-manager", "aio", "ahash", "r2d2"] }
+redis = { version = "^1.5.0", features = ["tokio-comp", "connection-manager", "aio", "ahash", "r2d2"] }
 mongodb = "^3.8.0"
 paho-mqtt = "^0.14.0"
 futures = "^0.3.33"
